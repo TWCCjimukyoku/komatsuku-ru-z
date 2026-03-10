@@ -152,6 +152,19 @@
   }
   .btn-reset:hover { background: rgba(255,255,255,0.15); }
 
+  .btn-publish {
+    background: var(--accent2);
+    border: none;
+    color: #fff;
+    padding: 0.35rem 1rem;
+    font-size: 0.8rem;
+    cursor: pointer;
+    border-radius: 2px;
+    font-family: 'Noto Sans JP', sans-serif;
+    transition: opacity 0.15s;
+  }
+  .btn-publish:hover { opacity: 0.85; }
+
   .btn-print {
     background: var(--accent);
     border: none;
@@ -381,6 +394,7 @@
     <div style="display:flex;align-items:center;gap:0.4rem;">
       <button class="btn-undo" id="btn-undo" onclick="undo()" disabled title="元に戻す">↩ 戻す</button>
       <button class="btn-undo" id="btn-redo" onclick="redo()" disabled title="やり直す">やり直す ↪</button>
+      <button class="btn-publish" onclick="publishHTML()">📤 パブリッシュ</button>
       <button class="btn-print" onclick="window.print()">🖨️ 印刷</button>
       <button class="btn-reset" onclick="resetApp()">← 最初に戻る</button>
     </div>
@@ -1243,6 +1257,123 @@ function collectLabels() {
     zone: r.querySelector('select').value,
     text: r.querySelector('input').value.trim(),
   })).filter(lb => lb.text);
+}
+
+// ══ パブリッシュ版HTML生成（M案）══
+function publishHTML() {
+  const title = document.getElementById('event-title')?.textContent || 'コマ図';
+
+  // 各コマのSVG＋情報を静的HTMLとして生成
+  const rowsHTML = komazuRows.map((row, i) => {
+    const isStart = row.type === 'start';
+    const isGoal  = row.type === 'goal';
+    const isSpecial = isStart || isGoal;
+
+    const numCell = isStart
+      ? `<td class="td-num checkpoint">START</td>`
+      : isGoal
+        ? `<td class="td-num checkpoint" style="color:#c0392b">GOAL</td>`
+        : `<td class="td-num">${i + 1}</td>`;
+
+    const distCell = `<td class="td-dist">
+      <span class="dist-total">${row.total.toFixed(2)}</span>
+      <span class="dist-part">${row.part.toFixed(2)}</span>
+    </td>`;
+
+    const svgHTML = buildSVGWithLabels(row);
+    const dirCell = `<td class="td-direction">${svgHTML}</td>`;
+
+    const infoLines = (row.info || '').split('\n').map(l => `<div>${escapeHTML(l)}</div>`).join('');
+    const infoCell = `<td class="td-info">${infoLines}</td>`;
+
+    const rowClass = isSpecial ? ' class="checkpoint-row"' : '';
+    return `<tr${rowClass}>${numCell}${distCell}${dirCell}${infoCell}</tr>`;
+  }).join('\n');
+
+  const lastTotal = komazuRows[komazuRows.length - 1]?.total ?? 0;
+
+  const html = `<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>${escapeHTML(title)}</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Noto+Sans+JP:wght@400;700&family=Share+Tech+Mono&display=swap');
+  :root { --border: #1a1a1a; --accent: #c0392b; --muted: #888; --row-alt: #fafaf7; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #f5f3ee; font-family: 'Noto Sans JP', sans-serif; color: var(--border); }
+
+  .komazu-wrap { max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
+  .komazu-event-title {
+    font-family: 'Bebas Neue', sans-serif; font-size: 2rem; letter-spacing: 0.05em;
+    margin-bottom: 1.5rem; padding-bottom: 0.5rem; border-bottom: 3px solid var(--border);
+  }
+
+  table.komazu-table { width: 100%; border-collapse: collapse; background: #fff; border: 2px solid var(--border); }
+  table.komazu-table thead tr { background: var(--border); color: #fff; }
+  table.komazu-table thead th { padding: 0.6rem 0.5rem; font-size: 0.78rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; }
+  table.komazu-table tbody tr { border-bottom: 1.5px solid #ddd; }
+  table.komazu-table tbody tr:nth-child(even) { background: var(--row-alt); }
+  table.komazu-table tbody tr.checkpoint-row { background: #fff8e1; }
+  table.komazu-table td { padding: 0.5rem; vertical-align: middle; font-size: 0.9rem; }
+
+  .td-num { width: 42px; text-align: center; font-family: 'Share Tech Mono', monospace; font-size: 1rem; font-weight: 700; color: var(--muted); }
+  .td-num.checkpoint { color: var(--accent); font-size: 0.75rem; font-weight: 900; }
+  .td-dist { width: 90px; text-align: center; }
+  .dist-total { font-family: 'Share Tech Mono', monospace; font-size: 1.1rem; font-weight: 700; display: block; }
+  .dist-part  { font-family: 'Share Tech Mono', monospace; font-size: 0.85rem; color: var(--muted); display: block; }
+  .td-direction { width: 160px; text-align: center; padding: 0.8rem 0.5rem; }
+  .td-info { min-width: 160px; font-size: 0.83rem; line-height: 1.8; padding: 0.6rem 0.8rem; }
+  svg.dir-svg { display: block; margin: 0 auto; }
+
+  .pub-footer { margin-top: 1rem; font-size: 0.8rem; color: #888; text-align: right; }
+
+  @media print {
+    body { background: #fff; }
+    .komazu-wrap { margin: 0; padding: 0; max-width: 100%; }
+    table.komazu-table { font-size: 0.8rem; page-break-inside: auto; }
+    tr { page-break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+<div class="komazu-wrap">
+  <div class="komazu-event-title">${escapeHTML(title)}</div>
+  <table class="komazu-table">
+    <thead>
+      <tr>
+        <th style="width:42px">#</th>
+        <th style="width:90px">Distance km<br><span style="font-weight:400;font-size:0.7rem">Total / Part</span></th>
+        <th>Direction</th>
+        <th>Information</th>
+      </tr>
+    </thead>
+    <tbody>
+${rowsHTML}
+    </tbody>
+  </table>
+  <div class="pub-footer">総走行距離：約 ${lastTotal.toFixed(1)} km ／ コマ数：${komazuRows.length}</div>
+</div>
+</body>
+</html>`;
+
+  // Blob URLでダウンロード
+  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = (title.replace(/\s+/g, '_') || 'komazu') + '_published.html';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function escapeHTML(str) {
+  return String(str ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }
 
 // ── イベント設定
