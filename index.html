@@ -3,1415 +3,1000 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>コマ図ジェネレーター</title>
+<title>コマ図ジェネレーター v2.51 (マルチ交差点対応・ルート赤線統一版)</title>
 <style>
-  /*
-   * 指示書 v1.3 — コマ図自動生成アプリ Phase 1
-   * 入力: KML/GPXファイル
-   * 処理: 座標列から交差点抽出・方向判定・距離計算
-   * 出力: 縦スクロールHTML形式のコマ図
-   * 外部API・サーバー不要、単一HTMLファイル
-   * [v1.1] SVG描画改修（道路線細く・矢印塗りつぶし三角形）
-   * [v1.2] 自車視点修正・交差点検出パラメータ調整
-   * [v1.3] 手動編集機能追加
-   *   - A案：ホバーで「＋前」「＋後」「✕」ボタン表示、番号自動振り直し
-   *   - C案：Directionクリックで編集パネル表示、9方向ボタン＋側道チェック＋SVGプレビュー
-   *   - F案：編集パネル内で目印ラベルを8方向ゾーン＋テキストで配置、SVG内に□ラベル描画
-   */
-
-  @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Noto+Sans+JP:wght@400;700&family=Share+Tech+Mono&display=swap');
+  @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Noto+Sans+JP:wght=400;700&family=Share+Tech+Mono&display=swap');
 
   :root {
     --bg: #f5f3ee;
     --panel: #ffffff;
     --border: #1a1a1a;
-    --accent: #c0392b;
-    --accent2: #2563eb;
-    --muted: #888;
-    --row-alt: #fafaf7;
-    --header-bg: #1a1a1a;
+    --accent: #d9534f;
+    --font-main: 'Noto Sans JP', sans-serif;
+    --font-num: 'Bebas Neue', sans-serif;
+    --font-mono: 'Share Tech Mono', monospace;
   }
 
   * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: var(--font-main); background: var(--bg); color: var(--border); padding: 20px; }
 
-  body {
-    background: var(--bg);
-    font-family: 'Noto Sans JP', sans-serif;
-    color: var(--border);
-    min-height: 100vh;
-  }
+  header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; background: var(--panel); padding: 15px 20px; border: 2px solid var(--border); box-shadow: 4px 4px 0px var(--border); flex-wrap: wrap; gap: 10px; }
+  h1 { font-size: 1.4rem; font-weight: 700; }
+  .btn-group { display: flex; gap: 10px; flex-wrap: wrap; }
+  
+  button { font-family: var(--font-main); font-weight: 700; padding: 8px 16px; border: 2px solid var(--border); background: #fff; cursor: pointer; box-shadow: 2px 2px 0px var(--border); transition: all 0.1s; display: inline-flex; align-items: center; gap: 5px; }
+  button:hover { transform: translate(1px, 1px); box-shadow: 1px 1px 0px var(--border); }
+  button:active { transform: translate(2px, 2px); box-shadow: 0px 0px 0px var(--border); }
+  button.danger { background: #f9f2f2; color: var(--accent); border-color: var(--accent); box-shadow: 2px 2px 0px var(--accent); }
+  button.danger:hover { box-shadow: 1px 1px 0px var(--accent); }
+  button.success { background: #f2f9f2; color: #4b9c4b; border-color: #4b9c4b; box-shadow: 2px 2px 0px #4b9c4b; }
+  button.success:hover { box-shadow: 1px 1px 0px #4b9c4b; }
 
-  /* ── upload screen ── */
-  #upload-screen {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    min-height: 100vh;
-    padding: 2rem;
-  }
+  .table-container { background: var(--panel); border: 2px solid var(--border); box-shadow: 6px 6px 0px var(--border); overflow-x: auto; margin-bottom: 40px; }
+  table { width: 100%; border-collapse: collapse; text-align: center; min-width: 800px; }
+  th, td { border: 1px solid var(--border); padding: 12px; vertical-align: middle; position: relative; }
+  th { background: #e2dfd8; font-weight: 700; font-size: 0.9rem; letter-spacing: 0.1em; }
 
-  .app-title {
-    font-family: 'Bebas Neue', sans-serif;
-    font-size: clamp(2.5rem, 8vw, 5rem);
-    letter-spacing: 0.05em;
-    color: var(--border);
-    line-height: 1;
-    margin-bottom: 0.2em;
-  }
+  .col-no { width: 60px; font-family: var(--font-num); font-size: 1.4rem; }
+  .col-dist { width: 160px; }
+  .col-dir { width: 180px; cursor: pointer; background: #faf9f6; }
+  .col-dir:hover { background: #f0ede5; }
+  .col-label { text-align: left; font-size: 0.95rem; }
+  .col-pc { width: 110px; }
+  .col-action { width: 120px; }
 
-  .app-subtitle {
-    font-size: 0.85rem;
-    color: var(--muted);
-    letter-spacing: 0.15em;
-    text-transform: uppercase;
-    margin-bottom: 3rem;
-  }
+  .dist-box { display: flex; flex-direction: column; gap: 4px; align-items: center; }
+  .dist-row { display: flex; align-items: center; width: 100%; justify-content: space-between; font-family: var(--font-mono); font-size: 1.2rem; }
+  .dist-label { font-family: var(--font-main); font-size: 0.7rem; font-weight: 700; background: var(--border); color: #fff; padding: 2px 4px; border-radius: 2px; }
 
-  .upload-box {
-    border: 2.5px dashed #bbb;
-    border-radius: 4px;
-    padding: 3rem 4rem;
-    text-align: center;
-    cursor: pointer;
-    transition: border-color 0.2s, background 0.2s;
-    background: var(--panel);
-    width: 100%;
-    max-width: 480px;
-  }
-  .upload-box:hover, .upload-box.drag-over {
-    border-color: var(--accent);
-    background: #fff5f5;
-  }
+  .action-btn-wrap { display: flex; gap: 4px; justify-content: center; }
+  .action-btn { padding: 4px 8px; font-size: 0.8rem; }
 
-  .upload-icon { font-size: 3rem; margin-bottom: 1rem; }
-  .upload-label { font-size: 1rem; font-weight: 700; margin-bottom: 0.5rem; }
-  .upload-hint { font-size: 0.8rem; color: var(--muted); }
+  .overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.4); z-index: 100; justify-content: center; align-items: center; }
+  .modal { background: var(--panel); border: 3px solid var(--border); box-shadow: 8px 8px 0px var(--border); width: 95%; max-width: 900px; padding: 25px; display: flex; flex-direction: column; gap: 20px; max-height: 95vh; overflow-y: auto; }
+  .modal-header { font-weight: 700; font-size: 1.2rem; border-bottom: 2px solid var(--border); padding-bottom: 10px; }
+  
+  .modal-body { display: flex; gap: 25px; flex-wrap: wrap; }
+  
+  .canvas-area { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  .canvas-container { border: 2px solid var(--border); background: #fff; display: inline-block; box-shadow: 3px 3px 0px var(--border); position: relative; }
+  #clock-svg { cursor: crosshair; display: block; user-select: none; }
+  
+  .palette { border: 2px solid var(--border); background: #faf9f6; padding: 10px; display: flex; gap: 10px; width: 204px; justify-content: center; flex-wrap: wrap; box-shadow: 2px 2px 0px var(--border); }
+  .palette-item { width: 36px; height: 36px; cursor: grab; background: #fff; border: 1px solid #ccc; display: flex; align-items: center; justify-content: center; user-select: none; }
+  .palette-item:hover { background: #eee; }
 
-  #file-input { display: none; }
+  .edit-fields { flex: 1; display: flex; flex-direction: column; gap: 12px; min-width: 280px; }
+  .field-group { display: flex; flex-direction: column; gap: 4px; }
+  .field-group label { font-size: 0.8rem; font-weight: 700; }
+  .field-group input[type="number"], .field-group input[type="text"] { padding: 8px; border: 2px solid var(--border); font-family: var(--font-mono); font-size: 1rem; }
+  .field-group input[type="range"] { width: 100%; accent-color: var(--border); }
+  .range-val { font-family: var(--font-mono); font-size: 0.85rem; text-align: right; margin-top: -2px; color: #555; }
+  
+  .checkbox-group { display: flex; align-items: center; gap: 8px; margin: 5px 0; background: #faf9f6; padding: 8px; border: 1px solid var(--border); }
+  .checkbox-group input { width: 18px; height: 18px; accent-color: var(--border); cursor: pointer; }
+  .checkbox-group label { font-weight: bold; cursor: pointer; font-size: 0.9rem; }
 
-  .how-to {
-    margin-top: 2.5rem;
-    max-width: 480px;
-    background: var(--panel);
-    border: 1.5px solid #ddd;
-    border-radius: 4px;
-    padding: 1.2rem 1.5rem;
-    font-size: 0.82rem;
-    line-height: 1.8;
-    color: #555;
-  }
-  .how-to strong { color: var(--border); }
-  .how-to ol { padding-left: 1.2em; }
+  .sub-panel { border-left: 3px solid #666; padding-left: 12px; margin-left: 5px; display: flex; flex-direction: column; gap: 10px; }
 
-  /* ── komazu output ── */
-  #output-screen { display: none; }
-
-  .output-header {
-    background: var(--header-bg);
-    color: #fff;
-    padding: 1rem 1.5rem;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    position: sticky;
-    top: 0;
-    z-index: 100;
-  }
-
-  .output-header-title {
-    font-family: 'Bebas Neue', sans-serif;
-    font-size: 1.5rem;
-    letter-spacing: 0.08em;
-  }
-
-  .btn-undo {
-    background: none;
-    border: 1.5px solid #fff;
-    color: #fff;
-    padding: 0.35rem 0.8rem;
-    font-size: 0.8rem;
-    cursor: pointer;
-    border-radius: 2px;
-    font-family: 'Noto Sans JP', sans-serif;
-    transition: background 0.15s;
-  }
-  .btn-undo:hover:not(:disabled) { background: rgba(255,255,255,0.15); }
-  .btn-undo:disabled { opacity: 0.35; cursor: default; }
-
-  .btn-reset {
-    background: none;
-    border: 1.5px solid #fff;
-    color: #fff;
-    padding: 0.35rem 1rem;
-    font-size: 0.8rem;
-    cursor: pointer;
-    border-radius: 2px;
-    font-family: 'Noto Sans JP', sans-serif;
-    transition: background 0.15s;
-  }
-  .btn-reset:hover { background: rgba(255,255,255,0.15); }
-
-  .btn-publish {
-    background: var(--accent2);
-    border: none;
-    color: #fff;
-    padding: 0.35rem 1rem;
-    font-size: 0.8rem;
-    cursor: pointer;
-    border-radius: 2px;
-    font-family: 'Noto Sans JP', sans-serif;
-    transition: opacity 0.15s;
-  }
-  .btn-publish:hover { opacity: 0.85; }
-
-  .btn-print {
-    background: var(--accent);
-    border: none;
-    color: #fff;
-    padding: 0.35rem 1rem;
-    font-size: 0.8rem;
-    cursor: pointer;
-    border-radius: 2px;
-    font-family: 'Noto Sans JP', sans-serif;
-    margin-left: 0.5rem;
-    transition: opacity 0.15s;
-  }
-  .btn-print:hover { opacity: 0.85; }
-
-  /* ── table ── */
-  .komazu-wrap {
-    max-width: 900px;
-    margin: 2rem auto;
-    padding: 0 1rem;
-  }
-
-  .komazu-event-title {
-    font-family: 'Bebas Neue', sans-serif;
-    font-size: 2rem;
-    letter-spacing: 0.05em;
-    margin-bottom: 1.5rem;
-    padding-bottom: 0.5rem;
-    border-bottom: 3px solid var(--border);
-  }
-
-  table.komazu-table {
-    width: 100%;
-    border-collapse: collapse;
-    background: var(--panel);
-    border: 2px solid var(--border);
-  }
-
-  table.komazu-table thead tr {
-    background: var(--border);
-    color: #fff;
-  }
-
-  table.komazu-table thead th {
-    padding: 0.6rem 0.5rem;
-    font-size: 0.78rem;
-    font-weight: 700;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-  }
-
-  table.komazu-table tbody tr {
-    border-bottom: 1.5px solid #ddd;
-  }
-  table.komazu-table tbody tr:nth-child(even) {
-    background: var(--row-alt);
-  }
-  table.komazu-table tbody tr.checkpoint-row {
-    background: #fff8e1;
-  }
-
-  table.komazu-table td {
-    padding: 0.5rem;
-    vertical-align: middle;
-    font-size: 0.9rem;
-  }
-
-  .td-num {
-    width: 42px;
-    text-align: center;
-    font-family: 'Share Tech Mono', monospace;
-    font-size: 1rem;
-    font-weight: 700;
-    color: var(--muted);
-  }
-  .td-num.checkpoint { color: var(--accent); font-size: 0.75rem; font-weight: 900; }
-
-  .td-dist {
-    width: 90px;
-    text-align: center;
-  }
-  .dist-total {
-    font-family: 'Share Tech Mono', monospace;
-    font-size: 1.1rem;
-    font-weight: 700;
-    display: block;
-  }
-  .dist-total.reset { color: var(--accent); }
-  .dist-part {
-    font-family: 'Share Tech Mono', monospace;
-    font-size: 0.85rem;
-    color: var(--muted);
-    display: block;
-  }
-
-  .td-direction {
-    width: 160px;
-    text-align: center;
-    padding: 0.8rem 0.5rem;
-  }
-
-  .td-info {
-    min-width: 160px;
-    font-size: 0.83rem;
-    line-height: 1.7;
-    padding: 0.6rem 0.8rem;
-  }
-  .info-name { font-weight: 700; font-size: 0.9rem; }
-  .info-type { color: var(--muted); font-size: 0.78rem; }
-  .info-edit {
-    display: block;
-    width: 100%;
-    min-height: 3.5em;
-    border: 1px dashed #ccc;
-    background: transparent;
-    font-family: 'Noto Sans JP', sans-serif;
-    font-size: 0.82rem;
-    padding: 0.3rem;
-    resize: vertical;
-    margin-top: 0.3rem;
-    color: var(--border);
-  }
-  .info-edit:focus { outline: 1.5px solid var(--accent2); border-color: var(--accent2); }
-
-  /* ── SVG direction icons ── */
-  svg.dir-svg { display: block; margin: 0 auto; }
-
-  /* ── error / loading ── */
-  .msg-error {
-    background: #ffeaea;
-    border: 1.5px solid var(--accent);
-    color: var(--accent);
-    padding: 0.8rem 1rem;
-    border-radius: 3px;
-    font-size: 0.85rem;
-    margin: 1rem 0;
-    max-width: 480px;
-  }
-
-  /* ── row hover controls ── */
-  .row-controls { display: none; gap: 3px; justify-content: center; flex-direction: column; align-items: center; }
-  tr:hover .row-controls { display: flex; }
-  .btn-row { font-size: 0.65rem; padding: 2px 5px; border-radius: 2px; border: 1px solid #ccc; background: #fff; cursor: pointer; white-space: nowrap; transition: background 0.1s; font-family: 'Noto Sans JP', sans-serif; }
-  .btn-row:hover { background: #f0f0f0; }
-  .btn-row.del { border-color: var(--accent); color: var(--accent); }
-  .btn-row.del:hover { background: #ffeaea; }
-  .td-ctrl { width: 48px; text-align: center; padding: 0.3rem; }
-  .td-direction { cursor: pointer; position: relative; }
-  .td-direction:hover::after { content: '✎ 編集'; position: absolute; bottom: 4px; left: 50%; transform: translateX(-50%); font-size: 0.65rem; color: var(--accent2); white-space: nowrap; pointer-events: none; }
-
-  /* ── edit panel ── */
-  #edit-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 200; align-items: center; justify-content: center; }
-  #edit-overlay.open { display: flex; }
-  #edit-panel { background: #fff; border-radius: 4px; width: min(520px, 95vw); max-height: 90vh; overflow-y: auto; padding: 1.5rem; box-shadow: 0 8px 32px rgba(0,0,0,0.25); }
-  .ep-title { font-family: 'Bebas Neue', sans-serif; font-size: 1.3rem; letter-spacing: 0.05em; margin-bottom: 1rem; border-bottom: 2px solid #eee; padding-bottom: 0.5rem; }
-  .ep-section { margin-bottom: 1.2rem; }
-  .ep-label { font-size: 0.75rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); margin-bottom: 0.5rem; }
-  .dir-grid { display: grid; grid-template-columns: repeat(3, 48px); gap: 4px; margin-bottom: 0.6rem; }
-  .dir-btn { width: 48px; height: 48px; border: 1.5px solid #ddd; border-radius: 3px; background: #fafafa; font-size: 1.2rem; cursor: pointer; transition: background 0.1s, border-color 0.1s; display: flex; align-items: center; justify-content: center; }
-  .dir-btn:hover { background: #f0f4ff; border-color: var(--accent2); }
-  .dir-btn.active { background: var(--accent2); color: #fff; border-color: var(--accent2); }
-  .side-checks { display: flex; gap: 1rem; font-size: 0.85rem; align-items: center; }
-  .side-checks label { display: flex; gap: 4px; align-items: center; cursor: pointer; }
-  .label-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 0.5rem; }
-  .label-row { display: flex; gap: 6px; align-items: center; }
-  .label-row select, .label-row input { border: 1px solid #ddd; border-radius: 2px; padding: 3px 6px; font-family: 'Noto Sans JP', sans-serif; font-size: 0.82rem; }
-  .label-row select { width: 90px; }
-  .label-row input { flex: 1; }
-  .btn-del-label { background: none; border: none; color: #aaa; cursor: pointer; font-size: 1rem; padding: 0 4px; }
-  .btn-del-label:hover { color: var(--accent); }
-  .btn-add-label { font-size: 0.78rem; padding: 3px 10px; border: 1px dashed var(--accent2); background: none; color: var(--accent2); border-radius: 2px; cursor: pointer; font-family: 'Noto Sans JP', sans-serif; }
-  .btn-add-label:hover { background: #f0f4ff; }
-  #ep-preview { border: 1.5px solid #eee; border-radius: 3px; display: flex; align-items: center; justify-content: center; padding: 0.5rem; background: #fafafa; min-height: 140px; }
-  .ep-footer { display: flex; gap: 0.5rem; justify-content: flex-end; margin-top: 1rem; }
-  .btn-confirm { background: var(--border); color: #fff; border: none; padding: 0.5rem 1.5rem; border-radius: 2px; cursor: pointer; font-family: 'Noto Sans JP', sans-serif; font-size: 0.85rem; }
-  .btn-confirm:hover { opacity: 0.85; }
-  .btn-cancel { background: none; border: 1.5px solid #ccc; color: #555; padding: 0.5rem 1.2rem; border-radius: 2px; cursor: pointer; font-family: 'Noto Sans JP', sans-serif; font-size: 0.85rem; }
-  .btn-cancel:hover { background: #f5f5f5; }
-
-  /* ── print ── */
-  @media print {
-    .output-header { display: none; }
-    .komazu-wrap { margin: 0; padding: 0; max-width: 100%; }
-    .info-edit { border: none; }
-    .td-ctrl { display: none; }
-    .row-controls { display: none !important; }
-    table.komazu-table { font-size: 0.8rem; }
-    #edit-overlay { display: none !important; }
-  }
+  .modal-footer { display: flex; justify-content: flex-end; gap: 10px; border-top: 2px solid var(--border); padding-top: 15px; margin-top: auto; }
+  .delete-icon-btn { cursor: pointer; fill: #d9534f; }
+  .delete-icon-btn:hover { fill: #ff0000; }
 </style>
 </head>
 <body>
 
-<!-- ════════════════ UPLOAD SCREEN ════════════════ -->
-<div id="upload-screen">
-  <div class="app-title">コマ図<br>ジェネレーター</div>
-  <div class="app-subtitle">Rally Stage Map Generator — Phase 1</div>
-
-  <div class="upload-box" id="drop-zone">
-    <div class="upload-icon">📁</div>
-    <div class="upload-label">KML / GPX ファイルを選択</div>
-    <div class="upload-hint" style="margin-bottom:1rem">またはここにドラッグ＆ドロップ</div>
-    <input type="file" id="file-input" accept=".kml,.gpx,.xml">
-    <label for="file-input" style="display:inline-block;background:#1a1a1a;color:#fff;padding:0.5rem 1.5rem;border-radius:2px;cursor:pointer;font-size:0.85rem;">ファイルを選ぶ</label>
+<header>
+  <h1>コマ図ジェネレーター v2.51 (マルチ交差点対応)</h1>
+  <div class="btn-group">
+    <button onclick="undo()">元に戻す</button>
+    <button onclick="exportJSON()">JSON出力</button>
+    <button onclick="importJSON()">JSON入力</button>
+    <button class="success" onclick="publishMobileHTML()">モバイル版パブリッシュ</button>
+    <button class="danger" onclick="clearData()">全クリア</button>
   </div>
-  <div id="upload-error"></div>
+</header>
 
-  <div class="how-to">
-    <strong>📌 ファイルの取得方法（Google マイマップ）</strong>
-    <ol>
-      <li>Google マイマップ (<a href="https://www.google.com/maps/d/" target="_blank">maps/d</a>) でルートを開く</li>
-      <li>左パネルのメニュー（⋮）→「KMLにエクスポート」</li>
-      <li>ダウンロードした <code>.kml</code> ファイルを上にアップロード</li>
-    </ol>
-    <br>
-    <strong>📌 GPX の場合</strong>
-    <ol>
-      <li>Googleマップの「ルート」→ブラウザ拡張等でGPXエクスポート</li>
-      <li>または各種GPSアプリからエクスポートしたGPXも読み込み可</li>
-    </ol>
-  </div>
+<div class="table-container">
+  <table id="komazu-table">
+    <thead>
+      <tr>
+        <th class="col-no">No</th>
+        <th class="col-dist">Distance (km)</th>
+        <th class="col-dir">Direction</th>
+        <th class="col-label">Information / Label</th>
+        <th class="col-pc">ペース管理</th>
+        <th class="col-action">操作</th>
+      </tr>
+    </thead>
+    <tbody id="komazu-body"></tbody>
+  </table>
 </div>
 
-<!-- ════════════════ OUTPUT SCREEN ════════════════ -->
-<div id="output-screen">
-  <div class="output-header">
-    <span class="output-header-title">コマ図 — <span id="header-name"></span></span>
-    <div style="display:flex;align-items:center;gap:0.4rem;">
-      <button class="btn-undo" id="btn-undo" onclick="undo()" disabled title="元に戻す">↩ 戻す</button>
-      <button class="btn-undo" id="btn-redo" onclick="redo()" disabled title="やり直す">やり直す ↪</button>
-      <button class="btn-publish" onclick="publishHTML()">📤 パブリッシュ</button>
-      <button class="btn-print" onclick="window.print()">🖨️ 印刷</button>
-      <button class="btn-reset" onclick="resetApp()">← 最初に戻る</button>
-    </div>
-  </div>
-  <div class="komazu-wrap">
-    <div class="komazu-event-title" id="event-title"></div>
-    <div id="komazu-container"></div>
-  </div>
-</div>
+<div id="edit-overlay" class="overlay" onclick="if(event.target===this) closeEditPanel()">
+  <div class="modal">
+    <div class="modal-header">コマ No.<span id="modal-no-title"></span> の編集</div>
+    <div class="modal-body">
+      
+      <div class="canvas-area">
+        <div class="canvas-container" id="svg-container" ondragover="allowDrop(event)" ondrop="dropIcon(event)">
+          <svg id="clock-svg" width="240" height="240" viewBox="0 0 200 200" onclick="handleSvgClick(event)">
+            <circle cx="100" cy="100" r="90" fill="none" stroke="#ddd" stroke-dasharray="4,4"/>
+            <circle cx="100" cy="100" r="45" fill="none" stroke="#eee" stroke-dasharray="2,2"/>
+            
+            <line id="svg-entry-line" x1="100" y1="200" x2="100" y2="100" stroke="#d9534f" stroke-width="14" stroke-linecap="round" />
+            <line id="svg-link-line" x1="100" y1="100" x2="100" y2="100" stroke="#d9534f" stroke-width="14" stroke-linecap="round" style="display:none;"/>
+            <g id="svg-roads-group"></g>
+            
+            <circle id="svg-center-point" cx="100" cy="100" r="5" fill="#1a1a1a"/>
+            <circle id="svg-center-point2" cx="100" cy="100" r="5" fill="#1a1a1a" style="display:none;"/>
+            
+            <g id="svg-icons-group"></g>
+          </svg>
+        </div>
+        
+        <div class="palette">
+          <div class="palette-item" draggable="true" ondragstart="drag(event, 'stop')" title="とまれ">
+            <svg width="24" height="24" viewBox="0 0 24 24"><polygon points="12,22 2,4 22,4" fill="#d9534f"/><polygon points="12,19 4,6 20,6" fill="#fff"/></svg>
+          </div>
+          <div class="palette-item" draggable="true" ondragstart="drag(event, 'one-way')" title="一方通行">
+            <svg width="24" height="24" viewBox="0 0 24 24"><rect x="4" y="2" width="16" height="20" fill="#337ab7" rx="2"/><polygon points="12,4 6,11 10,11 10,20 14,20 14,11 18,11" fill="#fff"/></svg>
+          </div>
+          <div class="palette-item" draggable="true" ondragstart="drag(event, 'signal')" title="信号機 (S)">
+            <svg width="24" height="24" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="#fff" stroke="#4b9c4b" stroke-width="3"/><text x="12" y="16.5" font-family="sans-serif" font-weight="bold" font-size="13" fill="#4b9c4b" text-anchor="middle">S</text></svg>
+          </div>
+          <div class="palette-item" draggable="true" ondragstart="drag(event, 'railway')" title="踏切">
+            <svg width="24" height="24" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20" fill="#f0ad4e" rx="2"/><line x1="2" y1="2" x2="22" y2="22" stroke="#000" stroke-width="3"/><line x1="22" y1="2" x2="2" y2="22" stroke="#000" stroke-width="3"/></svg>
+          </div>
+          <div class="palette-item" draggable="true" ondragstart="drag(event, 'route')" title="国道（おにぎり）">
+            <svg width="24" height="24" viewBox="0 0 24 24"><path d="M12,2 C17,2 21,7 19,16 C18,20 15,22 12,22 C9,22 6,20 5,16 C3,7 7,2 12,2 Z" fill="#337ab7"/><text x="12" y="15" font-family="sans-serif" font-size="8" fill="#fff" text-anchor="middle">R</text></svg>
+          </div>
+          <div class="palette-item" draggable="true" ondragstart="drag(event, 'signboard')" title="簡易青看板">
+            <svg width="24" height="24" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" fill="#337ab7" rx="2"/><rect x="4" y="6" width="16" height="12" fill="none" stroke="#fff" stroke-width="1"/></svg>
+          </div>
+        </div>
+      </div>
 
-<!-- ════════════════ EDIT OVERLAY ════════════════ -->
-<div id="edit-overlay">
-  <div id="edit-panel">
-    <div class="ep-title">Direction 編集</div>
-    <div class="ep-section">
-      <div class="ep-label">① 進行方向</div>
-      <div class="dir-grid">
-        <button class="dir-btn" data-diff="-45"  title="左斜め前">↖</button>
-        <button class="dir-btn" data-diff="0"    title="直進">↑</button>
-        <button class="dir-btn" data-diff="45"   title="右斜め前">↗</button>
-        <button class="dir-btn" data-diff="-90"  title="左折">←</button>
-        <button class="dir-btn" data-diff="999"  title="（なし）">✕</button>
-        <button class="dir-btn" data-diff="90"   title="右折">→</button>
-        <button class="dir-btn" data-diff="-135" title="左斜め後">↙</button>
-        <button class="dir-btn" data-diff="180"  title="Uターン">↓</button>
-        <button class="dir-btn" data-diff="135"  title="右斜め後">↘</button>
+      <div class="edit-fields">
+        <div style="display: flex; gap: 10px;">
+          <div class="field-group" style="flex:1;">
+            <label>区間距離 (Part)</label>
+            <input type="number" id="ep-part" step="0.01" min="0">
+          </div>
+          <div class="field-group" style="flex:1;">
+            <label>総距離 (Total)</label>
+            <input type="number" id="ep-total" step="0.01" min="0">
+          </div>
+        </div>
+        
+        <div style="background: #fff; padding: 8px; border: 1px dashed #bbb;">
+          <strong>第一原点 (通常交差点) の位置調整:</strong>
+          <div style="display: flex; gap: 15px; margin-top: 5px;">
+            <div class="field-group" style="flex: 1;">
+              <label>左右位置 (X)</label>
+              <input type="range" id="ep-offsetX" min="-50" max="50" step="5" value="0" oninput="handleOffsetChange()">
+              <div class="range-val" id="ep-offsetX-val">0</div>
+            </div>
+            <div class="field-group" style="flex: 1;">
+              <label>上下位置 (Y)</label>
+              <input type="range" id="ep-offsetY" min="-50" max="50" step="5" value="0" oninput="handleOffsetChange()">
+              <div class="range-val" id="ep-offsetY-val">0</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="checkbox-group">
+          <input type="checkbox" id="ep-use-v2" onchange="toggleV2Panel()">
+          <label for="ep-use-v2">第二原点（マルチ交差点・F字など）を有効にする</label>
+        </div>
+
+        <div id="v2-sub-panel" class="sub-panel" style="display: none; background: #fff; padding: 8px; border: 1px dashed #999;">
+          <strong>第二原点（追加の接続先）の位置調整:</strong>
+          <div style="display: flex; gap: 15px; margin-top: 5px;">
+            <div class="field-group" style="flex: 1;">
+              <label>第二 左右位置 (X2)</label>
+              <input type="range" id="ep-offsetX2" min="-50" max="50" step="5" value="0" oninput="handleOffsetChange()">
+              <div class="range-val" id="ep-offsetX2-val">0</div>
+            </div>
+            <div class="field-group" style="flex: 1;">
+              <label>第二 上下位置 (Y2)</label>
+              <input type="range" id="ep-offsetY2" min="-70" max="30" step="5" value="-40" oninput="handleOffsetChange()">
+              <div class="range-val" id="ep-offsetY2-val">-40</div>
+            </div>
+          </div>
+          <span style="font-size:0.75rem; color:#666;">※時計盤をクリックすると、近い方の中心点に対して道が追加されます。</span>
+        </div>
+
+        <div class="field-group">
+          <label>テキスト情報 / メモ</label>
+          <input type="text" id="ep-memo" placeholder="セブンイレブンを右、など">
+        </div>
+        <div id="placed-icons-list" style="margin-top:5px; font-size:0.85rem;">
+          <strong>配置済み標識テキスト入力:</strong>
+          <div id="icon-inputs-area" style="display:flex; flex-direction:column; gap:6px; margin-top:5px;"></div>
+        </div>
       </div>
-      <div class="side-checks">
-        <span style="font-size:0.8rem;color:var(--muted);margin-right:0.3rem">側道：</span>
-        <label><input type="checkbox" id="ep-side-left"> 左</label>
-        <label><input type="checkbox" id="ep-side-front"> 前</label>
-        <label><input type="checkbox" id="ep-side-right"> 右</label>
-      </div>
+      
     </div>
-    <div class="ep-section">
-      <div class="ep-label">② 距離（km）</div>
-      <div style="display:flex;gap:1rem;align-items:center;font-size:0.85rem;">
-        <label style="display:flex;align-items:center;gap:6px;">
-          Total
-          <input type="number" id="ep-total" step="0.01" min="0" style="width:80px;border:1px solid #ddd;border-radius:2px;padding:3px 6px;font-size:0.82rem;">
-        </label>
-        <label style="display:flex;align-items:center;gap:6px;">
-          Part
-          <input type="number" id="ep-part" step="0.01" min="0" style="width:80px;border:1px solid #ddd;border-radius:2px;padding:3px 6px;font-size:0.82rem;">
-        </label>
-      </div>
-    </div>
-    <div class="ep-section">
-      <div class="ep-label">② 目印ラベル</div>
-      <div class="label-list" id="ep-label-list"></div>
-      <button class="btn-add-label" id="btn-add-label">＋ ラベルを追加</button>
-    </div>
-    <div class="ep-section">
-      <div class="ep-label">プレビュー</div>
-      <div id="ep-preview"></div>
-    </div>
-    <div class="ep-footer">
-      <button class="btn-cancel" id="btn-ep-cancel">キャンセル</button>
-      <button class="btn-confirm" id="btn-ep-confirm">確定</button>
+    <div class="modal-footer">
+      <button onclick="closeEditPanel()">キャンセル</button>
+      <button onclick="confirmEdit()" style="background:#e2dfd8;">確定</button>
     </div>
   </div>
 </div>
 
 <script>
-// ══════════════════════════════════════════════
-//  指示書 v1.0 Phase 1 — 実装
-//  ・KML/GPX読み込み → 座標列抽出
-//  ・角度変化 ≥ 15° の地点を交差点として抽出
-//  ・方向判定・距離計算
-//  ・SVGで交差点図を描画
-// ══════════════════════════════════════════════
-
-// ── file handling ──────────────────────────────
-const dropZone = document.getElementById('drop-zone');
-const fileInput = document.getElementById('file-input');
-
-dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
-dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
-dropZone.addEventListener('drop', e => {
-  e.preventDefault();
-  dropZone.classList.remove('drag-over');
-  const file = e.dataTransfer.files[0];
-  if (file) handleFile(file);
-});
-fileInput.addEventListener('change', e => {
-  if (e.target.files[0]) handleFile(e.target.files[0]);
-});
-
-function handleFile(file) {
-  const reader = new FileReader();
-  reader.onload = e => {
-    try {
-      const text = e.target.result;
-      const lower = file.name.toLowerCase();
-      let result;
-      if (lower.endsWith('.gpx')) result = parseGPX(text);
-      else result = parseKML(text);
-      if (!result || result.coords.length < 2) {
-        showError('座標データが見つかりませんでした。ファイル形式を確認してください。');
-        return;
-      }
-      buildKomazu(result);
-    } catch(err) {
-      showError('ファイルの読み込みに失敗しました: ' + err.message);
-    }
-  };
-  reader.readAsText(file);
-}
-
-function showError(msg) {
-  document.getElementById('upload-error').innerHTML = `<div class="msg-error">⚠️ ${msg}</div>`;
-}
-
-function resetApp() {
-  document.getElementById('output-screen').style.display = 'none';
-  document.getElementById('upload-screen').style.display = 'flex';
-  document.getElementById('upload-error').innerHTML = '';
-  fileInput.value = '';
-  undoStack = [];
-  redoStack = [];
-  updateUndoRedoButtons();
-}
-
-// ── KML parser ────────────────────────────────
-function parseKML(text) {
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(text, 'text/xml');
-  const name = doc.querySelector('Document > name')?.textContent
-             || doc.querySelector('name')?.textContent
-             || 'ルート';
-
-  // LineString coordinates
-  const coordNodes = doc.querySelectorAll('LineString coordinates, coordinates');
-  let coords = [];
-  for (const node of coordNodes) {
-    const raw = node.textContent.trim();
-    const points = raw.split(/\s+/).map(p => {
-      const parts = p.split(',');
-      if (parts.length >= 2) {
-        const lng = parseFloat(parts[0]);
-        const lat = parseFloat(parts[1]);
-        if (!isNaN(lat) && !isNaN(lng)) return { lat, lng };
-      }
-      return null;
-    }).filter(Boolean);
-    if (points.length > coords.length) coords = points;
+  let komazuRows = [];
+  try {
+    const loadedData = localStorage.getItem('komazuData_v2.5');
+    if (loadedData) komazuRows = JSON.parse(loadedData);
+  } catch(e) {
+    console.error(e);
   }
 
-  // Placemarks as waypoints
-  const waypoints = [];
-  doc.querySelectorAll('Placemark').forEach(pm => {
-    const pmName = pm.querySelector('name')?.textContent || '';
-    const pt = pm.querySelector('Point coordinates');
-    if (pt) {
-      const p = pt.textContent.trim().split(',');
-      if (p.length >= 2) {
-        waypoints.push({ name: pmName, lat: parseFloat(p[1]), lng: parseFloat(p[0]) });
+  if (!Array.isArray(komazuRows) || komazuRows.length === 0) {
+    komazuRows = [
+      { id: 1, total: 0, part: 0, memo: 'START地点', pcType: 'none', direction: { mainAngle: null, branches: [], icons: [], offsetX: 0, offsetY: 0, useV2: false, offsetX2: 0, offsetY2: -40, branches2: [], mainAngle2: null } },
+      { id: 2, total: 0, part: 0, memo: 'GOAL地点', pcType: 'none', direction: { mainAngle: null, branches: [], icons: [], offsetX: 0, offsetY: 0, useV2: false, offsetX2: 0, offsetY2: -40, branches2: [], mainAngle2: null } }
+    ];
+  }
+
+  // 構造の正規化・初期化
+  komazuRows.forEach(row => {
+    row.total = Number(row.total) || 0;
+    row.part = Number(row.part) || 0;
+    if (!row.memo) row.memo = '';
+    if (!row.pcType) row.pcType = 'none';
+    if (!row.direction) row.direction = {};
+    
+    // 原点1
+    if (row.direction.offsetX === undefined) row.direction.offsetX = 0;
+    if (row.direction.offsetY === undefined) row.direction.offsetY = 0;
+    if (!Array.isArray(row.direction.branches)) row.direction.branches = [];
+    if (row.direction.mainAngle === undefined) row.direction.mainAngle = null;
+    if (!Array.isArray(row.direction.icons)) row.direction.icons = [];
+    
+    // 原点2（マルチ交差点用）
+    if (row.direction.useV2 === undefined) row.direction.useV2 = false;
+    if (row.direction.offsetX2 === undefined) row.direction.offsetX2 = 0;
+    if (row.direction.offsetY2 === undefined) row.direction.offsetY2 = -40;
+    if (!Array.isArray(row.direction.branches2)) row.direction.branches2 = [];
+    if (row.direction.mainAngle2 === undefined) row.direction.mainAngle2 = null;
+  });
+
+  let historyStack = [];
+  let editTargetIdx = null;
+  
+  // 編集中のローカル一時ステート
+  let localBranchState = []; 
+  let thisMainAngle = null;
+  let localBranchState2 = [];
+  let thisMainAngle2 = null;
+  let localIconState = [];
+  let localOffsetX = 0; let localOffsetY = 0;
+  let localUseV2 = false;
+  let localOffsetX2 = 0; let localOffsetY2 = -40;
+
+  function saveHistory() {
+    if (historyStack.length >= 20) historyStack.shift();
+    historyStack.push(JSON.stringify(komazuRows));
+  }
+
+  function undo() {
+    if (historyStack.length === 0) { alert('これ以上戻せません。'); return; }
+    komazuRows = JSON.parse(historyStack.pop());
+    renderTable();
+  }
+
+  function recalculateDistances() {
+    for (let i = 0; i < komazuRows.length; i++) {
+      let p = Number(komazuRows[i].part) || 0;
+      if (i === 0) {
+        let t = Number(komazuRows[i].total) || 0;
+        komazuRows[i].total = Math.max(0, t);
+        komazuRows[i].part = 0.00;
+      } else {
+        let prevT = Number(komazuRows[i-1].total) || 0;
+        komazuRows[i].total = parseFloat((prevT + p).toFixed(2));
+        komazuRows[i].part = p;
       }
     }
-  });
+  }
 
-  return { name, coords, waypoints };
-}
+  function generateCompleteSvg(dirObj, isMobileBuild) {
+    const size = isMobileBuild ? 160 : 100;
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("width", size);
+    svg.setAttribute("height", size);
+    svg.setAttribute("viewBox", "0 0 200 200");
+    
+    if (!dirObj) return svg;
 
-// ── GPX parser ────────────────────────────────
-function parseGPX(text) {
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(text, 'text/xml');
-  const name = doc.querySelector('metadata name, trk name, gpx name')?.textContent || 'ルート';
+    const ox1 = Number(dirObj.offsetX) || 0; const oy1 = Number(dirObj.offsetY) || 0;
+    const cx1 = 100 + ox1; const cy1 = 100 + oy1;
+    const useV2 = !!dirObj.useV2;
+    const ox2 = Number(dirObj.offsetX2) || 0; const oy2 = Number(dirObj.offsetY2) || 0;
+    const cx2 = 100 + ox2; const cy2 = 100 + oy2;
 
-  const coords = [];
-  // trkpt
-  doc.querySelectorAll('trkpt').forEach(pt => {
-    const lat = parseFloat(pt.getAttribute('lat'));
-    const lng = parseFloat(pt.getAttribute('lon'));
-    if (!isNaN(lat) && !isNaN(lng)) coords.push({ lat, lng });
-  });
-  // rtept fallback
-  if (coords.length === 0) {
-    doc.querySelectorAll('rtept').forEach(pt => {
-      const lat = parseFloat(pt.getAttribute('lat'));
-      const lng = parseFloat(pt.getAttribute('lon'));
-      if (!isNaN(lat) && !isNaN(lng)) coords.push({ lat, lng });
+    // 1. 進入路 (第一原点へ)
+    const entry = document.createElementNS("http://www.w3.org/2000/svg", "line");
+    entry.setAttribute("x1", "100"); entry.setAttribute("y1", "200");
+    entry.setAttribute("x2", cx1); entry.setAttribute("y2", cy1);
+    entry.setAttribute("stroke", "#d9534f"); entry.setAttribute("stroke-width", "14");
+    entry.setAttribute("stroke-linecap", "round");
+    svg.appendChild(entry);
+    
+    // 2. 第二原点への連絡路を描画 (v2.51 色を#777から進入線と同じ#d9534fにし、幅を14に統一)
+    if (useV2) {
+      const linkLine = document.createElementNS("http://www.w3.org/2000/svg", "line");
+      linkLine.setAttribute("x1", cx1); linkLine.setAttribute("y1", cy1);
+      linkLine.setAttribute("x2", cx2); linkLine.setAttribute("y2", cy2);
+      linkLine.setAttribute("stroke", "#d9534f"); linkLine.setAttribute("stroke-width", "14");
+      linkLine.setAttribute("stroke-linecap", "round");
+      svg.appendChild(linkLine);
+    }
+
+    // 3. 第一原点の分岐
+    if (Array.isArray(dirObj.branches)) {
+      dirObj.branches.forEach(br => {
+        const rad = (br.angle * Math.PI) / 180;
+        const x2 = cx1 + 90 * Math.cos(rad); const y2 = cy1 + 90 * Math.sin(rad);
+        const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+        line.setAttribute("x1", cx1); line.setAttribute("y1", cy1);
+        line.setAttribute("x2", x2); line.setAttribute("y2", y2);
+        line.setAttribute("stroke-linecap", "round");
+        
+        if (br.angle === dirObj.mainAngle) {
+          line.setAttribute("stroke", "#d9534f"); line.setAttribute("stroke-width", "14");
+          svg.appendChild(line);
+          appendArrowHead(svg, cx1, cy1, rad);
+        } else {
+          line.setAttribute("stroke", "#1a1a1a"); line.setAttribute("stroke-width", "5");
+          svg.appendChild(line);
+        }
+      });
+    }
+
+    // 4. 第二原点の分岐
+    if (useV2 && Array.isArray(dirObj.branches2)) {
+      dirObj.branches2.forEach(br => {
+        const rad = (br.angle * Math.PI) / 180;
+        const x2 = cx2 + 90 * Math.cos(rad); const y2 = cy2 + 90 * Math.sin(rad);
+        const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+        line.setAttribute("x1", cx2); line.setAttribute("y1", cy2);
+        line.setAttribute("x2", x2); line.setAttribute("y2", y2);
+        line.setAttribute("stroke-linecap", "round");
+        
+        if (br.angle === dirObj.mainAngle2) {
+          line.setAttribute("stroke", "#d9534f"); line.setAttribute("stroke-width", "14");
+          svg.appendChild(line);
+          appendArrowHead(svg, cx2, cy2, rad);
+        } else {
+          line.setAttribute("stroke", "#1a1a1a"); line.setAttribute("stroke-width", "5");
+          svg.appendChild(line);
+        }
+      });
+    }
+
+    // 5. 原点マーク
+    const c1 = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+    c1.setAttribute("cx", cx1); c1.setAttribute("cy", cy1); c1.setAttribute("r", "5"); c1.setAttribute("fill", "#1a1a1a");
+    svg.appendChild(c1);
+
+    if (useV2) {
+      const c2 = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      c2.setAttribute("cx", cx2); c2.setAttribute("cy", cy2); c2.setAttribute("r", "5"); c2.setAttribute("fill", "#1a1a1a");
+      svg.appendChild(c2);
+    }
+
+    // 6. 標識アイコン
+    if (Array.isArray(dirObj.icons)) {
+      dirObj.icons.forEach(ic => {
+        const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+        g.setAttribute("transform", `translate(${ic.x - 15}, ${ic.y - 15})`);
+        
+        let bg = "";
+        if (ic.type === 'signal') bg = `<circle cx="15" cy="15" r="12" fill="#fff"/>`;
+        else if (ic.type === 'stop') bg = `<polygon points="15,28 1,4 29,4" fill="#fff"/>`;
+        else if (ic.type === 'one-way' || ic.type === 'route' || ic.type === 'signboard') bg = `<rect x="1" y="1" width="28" height="28" fill="#fff" rx="2"/>`;
+
+        if (ic.type === 'stop') {
+          g.innerHTML = bg + `<polygon points="15,28 2,5 28,5" fill="#d9534f"/><polygon points="15,24 5,7 25,7" fill="#fff"/>`;
+        } else if (ic.type === 'one-way') {
+          g.innerHTML = bg + `<rect x="4" y="2" width="22" height="26" fill="#337ab7" rx="2"/><polygon points="15,4 7,12 12,12 12,24 18,24 18,12 23,12" fill="#fff"/>`;
+        } else if (ic.type === 'signal') {
+          g.innerHTML = bg + `<circle cx="15" cy="15" r="12" fill="#fff" stroke="#4b9c4b" stroke-width="3"/><text x="15" y="20" font-family="sans-serif" font-weight="bold" font-size="14" fill="#4b9c4b" text-anchor="middle">S</text>`;
+        } else if (ic.type === 'railway') {
+          g.innerHTML = `<rect x="2" y="2" width="26" height="26" fill="#f0ad4e" rx="2"/><line x1="2" y1="2" x2="28" y2="28" stroke="#000" stroke-width="3"/><line x1="28" y1="2" x2="2" y2="28" stroke="#000" stroke-width="3"/>`;
+        } else if (ic.type === 'route') {
+          g.innerHTML = bg + `<path d="M15,2 C22,2 27,8 25,20 C23,25 19,28 15,28 C11,28 7,25 5,20 C3,8 8,2 15,2 Z" fill="#337ab7"/><text x="15" y="18" font-family='sans-serif' font-weight='bold' font-size='9' fill='#fff' text-anchor='middle'>${ic.text||''}</text>`;
+        } else if (ic.type === 'signboard') {
+          g.innerHTML = bg + `<rect x="0" y="4" width="30" height="22" fill="#337ab7" rx="2"/><rect x="2" y="6" width="26" height="18" fill="none" stroke="#fff" stroke-width="1"/><text x="15" y="18" font-family='sans-serif' font-size='7' fill='#fff' text-anchor='middle'>${ic.text||''}</text>`;
+        }
+        svg.appendChild(g);
+      });
+    }
+
+    return svg;
+  }
+
+  function appendArrowHead(svg, cx, cy, rad) {
+    const arrow = document.createElementNS("http://www.w3.org/2000/svg", "polygon");
+    const ax = cx + 95 * Math.cos(rad); const ay = cy + 95 * Math.sin(rad);
+    const p1x = ax + 14 * Math.cos(rad + (Math.PI*5/6)); const p1y = ay + 14 * Math.sin(rad + (Math.PI*5/6));
+    const p2x = ax + 14 * Math.cos(rad - (Math.PI*5/6)); const p2y = ay + 14 * Math.sin(rad - (Math.PI*5/6));
+    arrow.setAttribute("points", `${ax},${ay} ${p1x},${p1y} ${p2x},${p2y}`);
+    arrow.setAttribute("fill", "#d9534f");
+    svg.appendChild(arrow);
+  }
+
+  function renderTable() {
+    const tbody = document.getElementById('komazu-body');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+
+    komazuRows.forEach((row, idx) => {
+      const tr = document.createElement('tr');
+
+      const tdNo = document.createElement('td');
+      tdNo.className = 'col-no'; tdNo.textContent = idx + 1;
+      tr.appendChild(tdNo);
+
+      const t = Number(row.total) || 0; const p = Number(row.part) || 0;
+      const tdDist = document.createElement('td');
+      tdDist.className = 'col-dist';
+      tdDist.innerHTML = `
+        <div class="dist-box">
+          <div class="dist-row"><span class="dist-label">TOTAL</span><span>${t.toFixed(2)}</span></div>
+          <div class="dist-row"><span class="dist-label">PART</span><span>${p.toFixed(2)}</span></div>
+        </div>
+      `;
+      tr.appendChild(tdDist);
+
+      const tdDir = document.createElement('td');
+      tdDir.className = 'col-dir';
+      tdDir.onclick = () => openEditPanel(idx);
+      
+      const miniSvg = generateCompleteSvg(row.direction, false);
+      tdDir.appendChild(miniSvg);
+      tr.appendChild(tdDir);
+
+      const tdLabel = document.createElement('td');
+      tdLabel.className = 'col-label'; tdLabel.textContent = row.memo || '';
+      tr.appendChild(tdLabel);
+
+      const tdPc = document.createElement('td');
+      tdPc.className = 'col-pc';
+      const select = document.createElement('select');
+      select.style.padding = "4px";
+      select.innerHTML = `
+        <option value="none" ${row.pcType==='none'?'selected':''}>通常</option>
+        <option value="start" ${row.pcType==='start'?'selected':''}>PCスタート</option>
+        <option value="goal" ${row.pcType==='goal'?'selected':''}>PCゴール</option>
+      `;
+      select.onchange = (e) => {
+        saveHistory();
+        row.pcType = e.target.value;
+        localStorage.setItem('komazuData_v2.5', JSON.stringify(komazuRows));
+      };
+      tdPc.appendChild(select);
+      tr.appendChild(tdPc);
+
+      const tdAct = document.createElement('td');
+      tdAct.className = 'col-action';
+      tdAct.innerHTML = `
+        <div class="action-btn-wrap">
+          <button class="action-btn" onclick="insertRow(${idx}, 'before')">＋前</button>
+          <button class="action-btn" onclick="insertRow(${idx}, 'after')">＋後</button>
+          <button class="action-btn danger" onclick="deleteRow(${idx})">×</button>
+        </div>
+      `;
+      tr.appendChild(tdAct);
+
+      tbody.appendChild(tr);
     });
+
+    localStorage.setItem('komazuData_v2.5', JSON.stringify(komazuRows));
   }
 
-  const waypoints = [];
-  doc.querySelectorAll('wpt').forEach(wpt => {
-    const wName = wpt.querySelector('name')?.textContent || '';
-    waypoints.push({ name: wName, lat: parseFloat(wpt.getAttribute('lat')), lng: parseFloat(wpt.getAttribute('lon')) });
-  });
-
-  return { name, coords, waypoints };
-}
-
-// ── geo utils ─────────────────────────────────
-function toRad(d) { return d * Math.PI / 180; }
-
-function haversine(a, b) {
-  const R = 6371;
-  const dLat = toRad(b.lat - a.lat);
-  const dLng = toRad(b.lng - a.lng);
-  const h = Math.sin(dLat/2)**2 + Math.cos(toRad(a.lat))*Math.cos(toRad(b.lat))*Math.sin(dLng/2)**2;
-  return R * 2 * Math.asin(Math.sqrt(h));
-}
-
-function bearing(a, b) {
-  const dLng = toRad(b.lng - a.lng);
-  const y = Math.sin(dLng) * Math.cos(toRad(b.lat));
-  const x = Math.cos(toRad(a.lat))*Math.sin(toRad(b.lat)) - Math.sin(toRad(a.lat))*Math.cos(toRad(b.lat))*Math.cos(dLng);
-  return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
-}
-
-function angleDiff(a, b) {
-  let d = b - a;
-  while (d > 180) d -= 360;
-  while (d < -180) d += 360;
-  return d;
-}
-
-// ── smooth coords (reduce GPS noise) ──────────
-function smooth(coords, win=3) {
-  if (coords.length <= win*2) return coords;
-  return coords.map((p, i) => {
-    const start = Math.max(0, i-win), end = Math.min(coords.length-1, i+win);
-    let lat=0, lng=0, cnt=0;
-    for (let j=start; j<=end; j++) { lat+=coords[j].lat; lng+=coords[j].lng; cnt++; }
-    return { lat: lat/cnt, lng: lng/cnt };
-  });
-}
-
-// ── subsample coords ──────────────────────────
-function subsample(coords, targetDist=0.02) {
-  const out = [coords[0]];
-  let acc = 0;
-  for (let i=1; i<coords.length; i++) {
-    acc += haversine(coords[i-1], coords[i]);
-    if (acc >= targetDist) { out.push(coords[i]); acc = 0; }
-  }
-  if (out[out.length-1] !== coords[coords.length-1]) out.push(coords[coords.length-1]);
-  return out;
-}
-
-// ── intersection detection ────────────────────
-const TURN_THRESHOLD = 15;   // degrees
-const MERGE_DIST     = 0.08; // km — merge nearby turns（v1.2: 0.06→0.08）
-
-function detectIntersections(coords) {
-  const smoothed = smooth(subsample(coords, 0.01), 2); // v1.2: 0.015→0.01, win 4→2
-
-  const turns = [];
-
-  // sliding window bearing calc
-  const WIN = 3; // v1.2: 5→3
-  const bearings = [];
-  for (let i=0; i<smoothed.length; i++) {
-    const a = smoothed[Math.max(0,i-WIN)];
-    const b = smoothed[Math.min(smoothed.length-1,i+WIN)];
-    bearings.push(bearing(a,b));
+  function insertRow(idx, position) {
+    saveHistory();
+    const insertIdx = position === 'before' ? idx : idx + 1;
+    komazuRows.splice(insertIdx, 0, {
+      id: Date.now() + Math.random(),
+      total: 0, part: 0.00, memo: '', pcType: 'none',
+      direction: { mainAngle: null, branches: [], icons: [], offsetX: 0, offsetY: 0, useV2: false, offsetX2: 0, offsetY2: -40, branches2: [], mainAngle2: null }
+    });
+    recalculateDistances(); renderTable();
   }
 
-  for (let i=WIN; i<smoothed.length-WIN; i++) {
-    const bIn  = bearings[i-1];
-    const bOut = bearings[i+1];
-    const diff = angleDiff(bIn, bOut);
-    if (Math.abs(diff) >= TURN_THRESHOLD) {
-      turns.push({ idx: i, coord: smoothed[i], bearingIn: bIn, bearingOut: bOut, diff });
+  function deleteRow(idx) {
+    if (komazuRows.length <= 1) { alert('これ以上削除できません。'); return; }
+    if (confirm(`コマ No.${idx + 1} を削除しますか？`)) {
+      saveHistory(); komazuRows.splice(idx, 1);
+      recalculateDistances(); renderTable();
     }
   }
 
-  // merge close turns
-  const merged = [];
-  let i = 0;
-  while (i < turns.length) {
-    let group = [turns[i]];
-    let j = i+1;
-    while (j < turns.length && haversine(turns[i].coord, turns[j].coord) < MERGE_DIST) {
-      group.push(turns[j]); j++;
+  function drag(ev, type) { ev.dataTransfer.setData("text/plain", type); }
+  function allowDrop(ev) { ev.preventDefault(); }
+  
+  function dropIcon(ev) {
+    ev.preventDefault();
+    const type = ev.dataTransfer.getData("text/plain");
+    const container = document.getElementById('svg-container');
+    const rect = container.getBoundingClientRect();
+    
+    const x = ((ev.clientX - rect.left) / rect.width) * 200;
+    const y = ((ev.clientY - rect.top) / rect.height) * 200;
+
+    localIconState.push({
+      id: Date.now() + Math.random(),
+      type: type,
+      x: Math.round(x), y: Math.round(y),
+      text: type === 'route' ? '30' : (type === 'signboard' ? '地名' : '')
+    });
+    renderClockSvg(); renderIconInputs();
+  }
+
+  function openEditPanel(idx) {
+    editTargetIdx = idx;
+    const row = komazuRows[idx];
+    
+    document.getElementById('modal-no-title').textContent = idx + 1;
+    document.getElementById('ep-part').value = row.part;
+    document.getElementById('ep-total').value = row.total;
+    document.getElementById('ep-memo').value = row.memo;
+
+    // ステートのコピー
+    localBranchState = JSON.parse(JSON.stringify(row.direction.branches || []));
+    thisMainAngle = row.direction.mainAngle;
+    localBranchState2 = JSON.parse(JSON.stringify(row.direction.branches2 || []));
+    thisMainAngle2 = row.direction.mainAngle2;
+    localIconState = JSON.parse(JSON.stringify(row.direction.icons || []));
+    
+    localOffsetX = row.direction.offsetX || 0;
+    localOffsetY = row.direction.offsetY || 0;
+    localUseV2 = !!row.direction.useV2;
+    localOffsetX2 = row.direction.offsetX2 !== undefined ? row.direction.offsetX2 : 0;
+    localOffsetY2 = row.direction.offsetY2 !== undefined ? row.direction.offsetY2 : -40;
+
+    document.getElementById('ep-offsetX').value = localOffsetX;
+    document.getElementById('ep-offsetX-val').textContent = localOffsetX;
+    document.getElementById('ep-offsetY').value = localOffsetY;
+    document.getElementById('ep-offsetY-val').textContent = localOffsetY;
+    
+    document.getElementById('ep-use-v2').checked = localUseV2;
+    document.getElementById('ep-offsetX2').value = localOffsetX2;
+    document.getElementById('ep-offsetX2-val').textContent = localOffsetX2;
+    document.getElementById('ep-offsetY2').value = localOffsetY2;
+    document.getElementById('ep-offsetY2-val').textContent = localOffsetY2;
+
+    toggleV2Panel();
+    document.getElementById('edit-overlay').style.display = 'flex';
+    renderClockSvg(); renderIconInputs();
+
+    // 距離連動
+    document.getElementById('ep-part').oninput = () => {
+      const p = parseFloat(document.getElementById('ep-part').value) || 0;
+      const prevTotal = idx > 0 ? komazuRows[idx-1].total : 0;
+      document.getElementById('ep-total').value = (prevTotal + p).toFixed(2);
+    };
+    document.getElementById('ep-total').oninput = () => {
+      const t = parseFloat(document.getElementById('ep-total').value) || 0;
+      const prevTotal = idx > 0 ? komazuRows[idx-1].total : 0;
+      document.getElementById('ep-part').value = Math.max(0, t - prevTotal).toFixed(2);
+    };
+  }
+
+  function toggleV2Panel() {
+    localUseV2 = document.getElementById('ep-use-v2').checked;
+    const panel = document.getElementById('v2-sub-panel');
+    const c2Marker = document.getElementById('svg-center-point2');
+    const linkLine = document.getElementById('svg-link-line');
+
+    if (localUseV2) {
+      panel.style.display = 'flex';
+      if(c2Marker) c2Marker.style.display = 'block';
+      if(linkLine) linkLine.style.display = 'block';
+    } else {
+      panel.style.display = 'none';
+      if(c2Marker) c2Marker.style.display = 'none';
+      if(linkLine) linkLine.style.display = 'none';
     }
-    // pick strongest turn in group
-    group.sort((a,b) => Math.abs(b.diff) - Math.abs(a.diff));
-    merged.push(group[0]);
-    i = j;
+    renderClockSvg();
   }
 
-  return merged;
-}
+  function handleOffsetChange() {
+    localOffsetX = parseInt(document.getElementById('ep-offsetX').value) || 0;
+    localOffsetY = parseInt(document.getElementById('ep-offsetY').value) || 0;
+    document.getElementById('ep-offsetX-val').textContent = localOffsetX;
+    document.getElementById('ep-offsetY-val').textContent = localOffsetY;
 
-// ── direction classification ──────────────────
-function classifyDirection(diff) {
-  const a = Math.abs(diff);
-  if (a < 15)  return 'straight';
-  if (diff > 0) {
-    if (a < 45)  return 'bear-right';
-    if (a < 135) return 'right';
-    return 'u-turn-right';
-  } else {
-    if (a < 45)  return 'bear-left';
-    if (a < 135) return 'left';
-    return 'u-turn-left';
-  }
-}
+    localOffsetX2 = parseInt(document.getElementById('ep-offsetX2').value) || 0;
+    localOffsetY2 = parseInt(document.getElementById('ep-offsetY2').value) || 0;
+    document.getElementById('ep-offsetX2-val').textContent = localOffsetX2;
+    document.getElementById('ep-offsetY2-val').textContent = localOffsetY2;
 
-function classifyIntersection(bearingIn, bearingOut) {
-  // Simplified: just return cross/t-right/t-left based on turn
-  return 'cross'; // placeholder, refined per SVG drawing
-}
-
-// ── direction label ────────────────────────────
-const DIR_LABEL = {
-  'straight':     '直進',
-  'bear-right':   '道なり右',
-  'bear-left':    '道なり左',
-  'right':        '右折',
-  'left':         '左折',
-  'u-turn-right': 'Uターン右',
-  'u-turn-left':  'Uターン左',
-};
-
-// ── SVG drawing ───────────────────────────────
-// [v1.1] 自車視点正規化：進入方向を常に下→上（bearing=0=North=Up の座標系で
-//        bearingIn が「下から来る」= 180° になるよう全体を回転する）
-function drawSVG(dir, bearingIn, bearingOut) {
-  const W = 130, H = 130, cx = 65, cy = 65;
-  const R = 46;  // road arm length from center
-
-  const diff = angleDiff(bearingIn, bearingOut);
-
-  // ── 正規化後の座標系でのbearing（進入=0°固定、進出=diff分ずれる）
-  // bearingInは使わず「進入=常に下から上、進出=diff分ずれる」で直接描画する
-  // 正規化後: bearingIn_norm=0, bearingOut_norm=diff
-  // SVG座標系変換: bearing→SVGangle = bearing - 90 (degrees)
-  // → ラジアン変換
-  function degToRad(d) { return d * Math.PI / 180; }
-  function normBearToSVGRad(b) { return degToRad(b - 90); }
-
-  // 正規化後の各方向
-  const inNorm  = 0;          // 進入方向（上向き固定）
-  const outNorm = diff;       // 進出方向（右折=正、左折=負）
-
-  // 進入側の「来た方向」= 下（180°）
-  const inTailRad = normBearToSVGRad(inNorm + 180); // 下方向
-  const outHeadRad = normBearToSVGRad(outNorm);      // 進出方向
-
-  // 各端点
-  const inTailX  = cx + Math.cos(inTailRad) * R;
-  const inTailY  = cy + Math.sin(inTailRad) * R;
-  const outHeadX = cx + Math.cos(outHeadRad) * R;
-  const outHeadY = cy + Math.sin(outHeadRad) * R;
-
-  // 側道（直交方向）
-  const perpRad1 = normBearToSVGRad(inNorm + 90);
-  const perpRad2 = normBearToSVGRad(inNorm - 90);
-  const perpX1 = cx + Math.cos(perpRad1) * R, perpY1 = cy + Math.sin(perpRad1) * R;
-  const perpX2 = cx + Math.cos(perpRad2) * R, perpY2 = cy + Math.sin(perpRad2) * R;
-
-  // 側道表示判定
-  const absDiff = Math.abs(diff);
-  const showCross      = absDiff >= 45 && absDiff <= 135;  // 十字路相当
-  const showBearCross  = absDiff >= 15 && absDiff < 45;    // 道なり（鋭角交差）
-
-  // ── 矢印（塗りつぶし三角形）
-  // 進出方向の終端に三角を配置。線の終端が三角の頂点になるよう、
-  // 少し手前からベースを取り頂点を線終端に合わせる
-  const arrowTip  = 14; // 矢先の長さ
-  const arrowWid  = 9;  // 矢先の幅（半分）
-  const tipX = outHeadX, tipY = outHeadY;
-  const baseX = cx + Math.cos(outHeadRad) * (R - arrowTip);
-  const baseY = cy + Math.sin(outHeadRad) * (R - arrowTip);
-  const perpA = outHeadRad + Math.PI / 2;
-  const p1x = baseX + Math.cos(perpA) * arrowWid, p1y = baseY + Math.sin(perpA) * arrowWid;
-  const p2x = baseX - Math.cos(perpA) * arrowWid, p2y = baseY - Math.sin(perpA) * arrowWid;
-
-  // ── SVG要素を構築
-  // 描画順：側道（薄）→ 進入路（薄）→ 進出路（太）→ 矢印（最前面）
-  const styleRoad  = `stroke="#1a1a1a" stroke-width="3" stroke-linecap="round"`;
-  const styleSide  = `stroke="#aaa" stroke-width="3" stroke-linecap="round"`;
-  const styleOut   = `stroke="#1a1a1a" stroke-width="5" stroke-linecap="round"`;
-
-  let inner = '';
-
-  // 側道
-  if (showCross) {
-    inner += `<line x1="${cx}" y1="${cy}" x2="${perpX1.toFixed(1)}" y2="${perpY1.toFixed(1)}" ${styleSide}/>`;
-    inner += `<line x1="${cx}" y1="${cy}" x2="${perpX2.toFixed(1)}" y2="${perpY2.toFixed(1)}" ${styleSide}/>`;
-  } else if (showBearCross) {
-    // 曲がる側と反対の側道のみ表示
-    const sideRad = diff > 0 ? perpRad2 : perpRad1;
-    const sX = cx + Math.cos(sideRad) * R, sY = cy + Math.sin(sideRad) * R;
-    inner += `<line x1="${cx}" y1="${cy}" x2="${sX.toFixed(1)}" y2="${sY.toFixed(1)}" ${styleSide}/>`;
+    renderClockSvg();
   }
 
-  // 進入路（下方向）
-  inner += `<line x1="${cx}" y1="${cy}" x2="${inTailX.toFixed(1)}" y2="${inTailY.toFixed(1)}" ${styleRoad}/>`;
+  function closeEditPanel() {
+    document.getElementById('edit-overlay').style.display = 'none';
+    editTargetIdx = null;
+  }
 
-  // 進出路（矢印の手前まで）
-  inner += `<line x1="${cx}" y1="${cy}" x2="${baseX.toFixed(1)}" y2="${baseY.toFixed(1)}" ${styleOut}/>`;
+  function confirmEdit() {
+    saveHistory();
+    const row = komazuRows[editTargetIdx];
+    row.part = parseFloat(parseFloat(document.getElementById('ep-part').value).toFixed(2)) || 0;
+    row.total = parseFloat(parseFloat(document.getElementById('ep-total').value).toFixed(2)) || 0;
+    row.memo = document.getElementById('ep-memo').value;
+    
+    row.direction.branches = localBranchState;
+    row.direction.mainAngle = thisMainAngle;
+    row.direction.branches2 = localBranchState2;
+    row.direction.mainAngle2 = thisMainAngle2;
+    row.direction.icons = localIconState;
+    row.direction.offsetX = localOffsetX;
+    row.direction.offsetY = localOffsetY;
+    row.direction.useV2 = localUseV2;
+    row.direction.offsetX2 = localOffsetX2;
+    row.direction.offsetY2 = localOffsetY2;
 
-  // 矢印（塗りつぶし三角形）
-  inner += `<polygon points="${tipX.toFixed(1)},${tipY.toFixed(1)} ${p1x.toFixed(1)},${p1y.toFixed(1)} ${p2x.toFixed(1)},${p2y.toFixed(1)}" fill="#1a1a1a"/>`;
+    recalculateDistances(); renderTable(); closeEditPanel();
+  }
 
-  // SVG全体を rotDeg 回転（自車視点正規化）
-  return `<svg class="dir-svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
-    <g>${inner}</g>
-  </svg>`;
-}
+  // 時計盤クリック時の振り分けロジック
+  function handleSvgClick(event) {
+    const svg = document.getElementById('clock-svg');
+    const pt = svg.createSVGPoint();
+    pt.x = event.clientX; pt.y = event.clientY;
+    const svgP = pt.matrixTransform(svg.getScreenCTM().inverse());
+    
+    const cx1 = 100 + localOffsetX; const cy1 = 100 + localOffsetY;
+    const cx2 = 100 + localOffsetX2; const cy2 = 100 + localOffsetY2;
 
-// ── main build ────────────────────────────────
-function buildKomazu({ name, coords, waypoints }) {
-  document.getElementById('upload-screen').style.display = 'none';
-  document.getElementById('output-screen').style.display = 'block';
-  document.getElementById('header-name').textContent = name;
-  document.getElementById('event-title').textContent = name + ' コマ図';
+    // クリック位置から原点1と原点2への距離を計算
+    const distToV1 = Math.sqrt((svgP.x - cx1)**2 + (svgP.y - cy1)**2);
+    const distToV2 = Math.sqrt((svgP.x - cx2)**2 + (svgP.y - cy2)**2);
 
-  if (coords.length < 2) { showError('座標が不足しています'); return; }
+    // 中心点そのもののクリックは無視
+    if (distToV1 < 12 || (localUseV2 && distToV2 < 12)) return;
 
-  const turns = detectIntersections(coords);
+    // 第二原点が有効かつ、第二原点の方がクリック位置に近い場合は「第二原点の交差点」を編集
+    if (localUseV2 && distToV2 < distToV1) {
+      let angle = Math.atan2(svgP.y - cy2, svgP.x - cx2) * 180 / Math.PI;
+      angle = Math.round(angle / 15) * 15; if (angle < 0) angle += 360;
 
-  // Build rows
-  const rows = [];
+      const existingIdx = localBranchState2.findIndex(b => Math.abs(b.angle - angle) < 5);
+      if (existingIdx !== -1) {
+        if (thisMainAngle2 === localBranchState2[existingIdx].angle) {
+          thisMainAngle2 = null; localBranchState2.splice(existingIdx, 1);
+        } else {
+          thisMainAngle2 = localBranchState2[existingIdx].angle;
+        }
+      } else {
+        localBranchState2.push({ angle: angle });
+      }
+    } else {
+      // 通常の第一原点側の処理
+      let angle = Math.atan2(svgP.y - cy1, svgP.x - cx1) * 180 / Math.PI;
+      angle = Math.round(angle / 15) * 15; if (angle < 0) angle += 360;
 
-  // Start
-  rows.push({
-    type: 'start',
-    total: 0, part: 0,
-    bearingIn: bearing(coords[0], coords[Math.min(5, coords.length-1)]),
-    bearingOut: bearing(coords[0], coords[Math.min(5, coords.length-1)]),
-    diff: 0,
-    label: 'スタート',
-  });
+      const existingIdx = localBranchState.findIndex(b => Math.abs(b.angle - angle) < 5);
+      if (existingIdx !== -1) {
+        if (thisMainAngle === localBranchState[existingIdx].angle) {
+          thisMainAngle = null; localBranchState.splice(existingIdx, 1);
+        } else {
+          thisMainAngle = localBranchState[existingIdx].angle;
+        }
+      } else {
+        localBranchState.push({ angle: angle });
+      }
+    }
+    renderClockSvg();
+  }
 
-  let prevTotal = 0;
-  // total distance along full coords to each turn
-  const totalDist = buildCumDist(coords);
+  function renderClockSvg() {
+    const cx1 = 100 + localOffsetX; const cy1 = 100 + localOffsetY;
+    const cx2 = 100 + localOffsetX2; const cy2 = 100 + localOffsetY2;
 
-  turns.forEach((t, i) => {
-    // find closest coord index to turn coord
-    const nearIdx = findNearestIdx(coords, t.coord);
-    const total = totalDist[nearIdx];
-    const part  = total - prevTotal;
-    prevTotal = total;
+    // 進入路更新
+    const entryLine = document.getElementById('svg-entry-line');
+    if(entryLine) { entryLine.setAttribute("x2", cx1); entryLine.setAttribute("y2", cy1); }
 
-    // check if near a waypoint
-    let wpName = '';
-    waypoints.forEach(wp => {
-      if (haversine(t.coord, wp) < 0.15) wpName = wp.name;
+    // 連絡路更新 (v2.51 属性更新と同時に太さを14に設定)
+    const linkLine = document.getElementById('svg-link-line');
+    if(linkLine) {
+      linkLine.setAttribute("x1", cx1); linkLine.setAttribute("y1", cy1);
+      linkLine.setAttribute("x2", cx2); linkLine.setAttribute("y2", cy2);
+      linkLine.setAttribute("stroke-width", "14");
+    }
+
+    const rGroup = document.getElementById('svg-roads-group');
+    if(!rGroup) return;
+    rGroup.innerHTML = '';
+    
+    // 原点1 分岐路描画
+    localBranchState.forEach(br => {
+      const rad = (br.angle * Math.PI) / 180;
+      const x2 = cx1 + 90 * Math.cos(rad); const y2 = cy1 + 90 * Math.sin(rad);
+      const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+      line.setAttribute("x1", cx1); line.setAttribute("y1", cy1);
+      line.setAttribute("x2", x2); line.setAttribute("y2", y2);
+      line.setAttribute("stroke-linecap", "round");
+
+      if (br.angle === thisMainAngle) {
+        line.setAttribute("stroke", "#d9534f"); line.setAttribute("stroke-width", "14");
+        rGroup.appendChild(line);
+        appendArrowHead(rGroup, cx1, cy1, rad);
+      } else {
+        line.setAttribute("stroke", "#1a1a1a"); line.setAttribute("stroke-width", "5");
+        rGroup.appendChild(line);
+      }
     });
 
-    rows.push({
-      type: 'turn',
-      total: total,
-      part: part,
-      bearingIn: t.bearingIn,
-      bearingOut: t.bearingOut,
-      diff: t.diff,
-      label: wpName,
-      dir: classifyDirection(t.diff),
+    // 原点2 分岐路描画
+    if (localUseV2) {
+      localBranchState2.forEach(br => {
+        const rad = (br.angle * Math.PI) / 180;
+        const x2 = cx2 + 90 * Math.cos(rad); const y2 = cy2 + 90 * Math.sin(rad);
+        const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+        line.setAttribute("x1", cx2); line.setAttribute("y1", cy2);
+        line.setAttribute("x2", x2); line.setAttribute("y2", y2);
+        line.setAttribute("stroke-linecap", "round");
+
+        if (br.angle === thisMainAngle2) {
+          line.setAttribute("stroke", "#d9534f"); line.setAttribute("stroke-width", "14");
+          rGroup.appendChild(line);
+          appendArrowHead(rGroup, cx2, cy2, rad);
+        } else {
+          line.setAttribute("stroke", "#1a1a1a"); line.setAttribute("stroke-width", "5");
+          rGroup.appendChild(line);
+        }
+      });
+    }
+
+    // 中心点位置固定
+    const centerPt = document.getElementById('svg-center-point');
+    if(centerPt) { centerPt.setAttribute("cx", cx1); centerPt.setAttribute("cy", cy1); }
+    const centerPt2 = document.getElementById('svg-center-point2');
+    if(centerPt2) { centerPt2.setAttribute("cx", cx2); centerPt2.setAttribute("cy", cy2); }
+
+    // 標識再配置
+    const iGroup = document.getElementById('svg-icons-group');
+    if(!iGroup) return;
+    iGroup.innerHTML = '';
+    localIconState.forEach((ic, index) => {
+      const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+      g.setAttribute("transform", `translate(${ic.x - 15}, ${ic.y - 15})`);
+      g.style.cursor = 'pointer';
+      g.onclick = (e) => { e.stopPropagation(); deleteIcon(index); };
+      
+      let bg = "";
+      if (ic.type === 'signal') bg = `<circle cx="15" cy="15" r="12" fill="#fff"/>`;
+      else if (ic.type === 'stop') bg = `<polygon points="15,28 1,4 29,4" fill="#fff"/>`;
+      else if (ic.type === 'one-way' || ic.type === 'route' || ic.type === 'signboard') bg = `<rect x="1" y="1" width="28" height="28" fill="#fff" rx="2"/>`;
+
+      if (ic.type === 'stop') {
+        g.innerHTML = bg + `<polygon points="15,28 2,5 28,5" fill="#d9534f"/><polygon points="15,24 5,7 25,7" fill="#fff"/>`;
+      } else if (ic.type === 'one-way') {
+        g.innerHTML = bg + `<rect x="4" y="2" width="22" height="26" fill="#337ab7" rx="2"/><polygon points="15,4 7,12 12,12 12,24 18,24 18,12 23,12" fill="#fff"/>`;
+      } else if (ic.type === 'signal') {
+        g.innerHTML = bg + `<circle cx="15" cy="15" r="12" fill="#fff" stroke="#4b9c4b" stroke-width="3"/><text x="15" y="20" font-family="sans-serif" font-weight="bold" font-size="14" fill="#4b9c4b" text-anchor="middle">S</text>`;
+      } else if (ic.type === 'railway') {
+        g.innerHTML = `<rect x="2" y="2" width="26" height="26" fill="#f0ad4e" rx="2"/><line x1="2" y1="2" x2="28" y2="28" stroke="#000" stroke-width="3"/><line x1="28" y1="2" x2="2" y2="28" stroke="#000" stroke-width="3"/>`;
+      } else if (ic.type === 'route') {
+        g.innerHTML = bg + `<path d="M15,2 C22,2 27,8 25,20 C23,25 19,28 15,28 C11,28 7,25 5,20 C3,8 8,2 15,2 Z" fill="#337ab7"/><text x="15" y="18" font-family='sans-serif' font-weight='bold' font-size='9' fill='#fff' text-anchor='middle'>${ic.text||''}</text>`;
+      } else if (ic.type === 'signboard') {
+        g.innerHTML = bg + `<rect x="0" y="4" width="30" height="22" fill="#337ab7" rx="2"/><rect x="2" y="6" width="26" height="18" fill="none" stroke="#fff" stroke-width="1"/><text x="15" y="18" font-family='sans-serif' font-size='7' fill='#fff' text-anchor='middle'>${ic.text||''}</text>`;
+      }
+      
+      const delMark = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+      delMark.setAttribute("cx", "28"); delMark.setAttribute("cy", "2"); delMark.setAttribute("r", "5");
+      delMark.setAttribute("class", "delete-icon-btn");
+      g.appendChild(delMark);
+
+      iGroup.appendChild(g);
     });
-  });
-
-  // Goal
-  const goalIdx = coords.length - 1;
-  const goalTotal = totalDist[goalIdx];
-  rows.push({
-    type: 'goal',
-    total: goalTotal,
-    part: goalTotal - prevTotal,
-    bearingIn: bearing(coords[Math.max(0,goalIdx-5)], coords[goalIdx]),
-    bearingOut: bearing(coords[Math.max(0,goalIdx-5)], coords[goalIdx]),
-    diff: 0,
-    label: 'ゴール',
-  });
-
-  // rowにdiff・sideLeft・sideRight・labelsを初期設定
-  rows.forEach(row => {
-    if (row.diff === undefined) row.diff = 0;
-    row.sideLeft  = Math.abs(row.diff) >= 45;
-    row.sideRight = Math.abs(row.diff) >= 45;
-    row.labels = [];
-    row.info = row.label ? (row.label + (row.dir ? '\n' + DIR_LABEL[row.dir] : '')) : (row.dir ? DIR_LABEL[row.dir] : '');
-  });
-
-  // render
-  renderTable(rows);
-}
-
-function buildCumDist(coords) {
-  const d = [0];
-  for (let i=1; i<coords.length; i++) {
-    d.push(d[i-1] + haversine(coords[i-1], coords[i]));
-  }
-  return d;
-}
-
-function findNearestIdx(coords, target) {
-  let best = 0, bestD = Infinity;
-  for (let i=0; i<coords.length; i++) {
-    const d = haversine(coords[i], target);
-    if (d < bestD) { bestD = d; best = i; }
-  }
-  return best;
-}
-
-// ══ グローバルなコマデータ（DOM再描画用）══
-let komazuRows = [];
-
-// ══ Undo/Redo 履歴管理（J案：確定操作のみ・20段階）══
-const HISTORY_MAX = 20;
-let undoStack = [];  // 過去のスナップショット
-let redoStack = [];  // Undo後のスナップショット
-
-function saveHistory() {
-  undoStack.push(JSON.stringify(komazuRows));
-  if (undoStack.length > HISTORY_MAX) undoStack.shift();
-  redoStack = []; // 新操作でRedoスタックをクリア
-  updateUndoRedoButtons();
-}
-
-function undo() {
-  if (undoStack.length === 0) return;
-  redoStack.push(JSON.stringify(komazuRows));
-  komazuRows = JSON.parse(undoStack.pop());
-  renderTable(komazuRows);
-  updateUndoRedoButtons();
-}
-
-function redo() {
-  if (redoStack.length === 0) return;
-  undoStack.push(JSON.stringify(komazuRows));
-  komazuRows = JSON.parse(redoStack.pop());
-  renderTable(komazuRows);
-  updateUndoRedoButtons();
-}
-
-function updateUndoRedoButtons() {
-  const btnUndo = document.getElementById('btn-undo');
-  const btnRedo = document.getElementById('btn-redo');
-  if (btnUndo) btnUndo.disabled = undoStack.length === 0;
-  if (btnRedo) btnRedo.disabled = redoStack.length === 0;
-}
-
-function renderTable(rows) {
-  komazuRows = rows;
-  const container = document.getElementById('komazu-container');
-  container.innerHTML = '';
-
-  const table = document.createElement('table');
-  table.className = 'komazu-table';
-  table.innerHTML = `<thead><tr>
-    <th style="width:48px"></th>
-    <th style="width:42px">#</th>
-    <th style="width:90px">Distance km<br><span style="font-weight:400;font-size:0.7rem">Total / Part</span></th>
-    <th>Direction</th>
-    <th>Information</th>
-  </tr></thead>`;
-
-  const tbody = document.createElement('tbody');
-  rows.forEach((row, i) => renderRow(tbody, rows, i));
-  table.appendChild(tbody);
-  container.appendChild(table);
-
-  // 総距離表示
-  const lastTotal = rows[rows.length-1]?.total ?? 0;
-  const foot = document.createElement('div');
-  foot.style.cssText = 'margin-top:1rem;font-size:0.8rem;color:#888;text-align:right';
-  foot.textContent = `総走行距離：約 ${lastTotal.toFixed(1)} km ／ コマ数：${rows.length}`;
-  container.appendChild(foot);
-}
-
-function renderRow(tbody, rows, i) {
-  const row = rows[i];
-  const tr = document.createElement('tr');
-  if (row.type === 'start' || row.type === 'goal') tr.className = 'checkpoint-row';
-  tr.dataset.idx = i;
-
-  // ── 操作列
-  const tdCtrl = document.createElement('td');
-  tdCtrl.className = 'td-ctrl';
-  const ctrlDiv = document.createElement('div');
-  ctrlDiv.className = 'row-controls';
-  const btnBefore = document.createElement('button');
-  btnBefore.className = 'btn-row';
-  btnBefore.textContent = '＋前';
-  btnBefore.onclick = () => insertRow(i, 'before');
-  const btnAfter = document.createElement('button');
-  btnAfter.className = 'btn-row';
-  btnAfter.textContent = '＋後';
-  btnAfter.onclick = () => insertRow(i, 'after');
-  const btnDel = document.createElement('button');
-  btnDel.className = 'btn-row del';
-  btnDel.textContent = '✕';
-  btnDel.onclick = () => deleteRow(i);
-  ctrlDiv.append(btnBefore, btnAfter, btnDel);
-  tdCtrl.appendChild(ctrlDiv);
-
-  // ── 番号列
-  const tdNum = document.createElement('td');
-  tdNum.className = 'td-num';
-  if (row.type === 'start') { tdNum.className += ' checkpoint'; tdNum.textContent = 'START'; }
-  else if (row.type === 'goal') { tdNum.className += ' checkpoint'; tdNum.style.color = 'var(--accent)'; tdNum.textContent = 'GOAL'; }
-  else { tdNum.textContent = i + 1; }
-
-  // ── 距離列
-  const tdDist = document.createElement('td');
-  tdDist.className = 'td-dist';
-  const spanTotal = document.createElement('span');
-  spanTotal.className = 'dist-total';
-  spanTotal.textContent = row.total.toFixed(2);
-  const spanPart = document.createElement('span');
-  spanPart.className = 'dist-part';
-  spanPart.textContent = row.part.toFixed(2);
-  tdDist.append(spanTotal, spanPart);
-
-  // ── Direction列
-  const tdDir = document.createElement('td');
-  tdDir.className = 'td-direction';
-  tdDir.innerHTML = buildSVGWithLabels(row);
-  tdDir.onclick = () => openEditPanel(i);
-
-  // ── Information列
-  const tdInfo = document.createElement('td');
-  tdInfo.className = 'td-info';
-  const ta = document.createElement('textarea');
-  ta.className = 'info-edit';
-  ta.placeholder = '目印・メモを入力…';
-  ta.value = row.info ?? '';
-  ta.oninput = () => { komazuRows[i].info = ta.value; };
-  tdInfo.appendChild(ta);
-
-  tr.append(tdCtrl, tdNum, tdDist, tdDir, tdInfo);
-  tbody.appendChild(tr);
-}
-
-// ── ラベル付きSVG生成
-function buildSVGWithLabels(row) {
-  const W = 130, H = 130, cx = 65, cy = 65, R = 46;
-  const diff = row.diff ?? 0;
-  const sideLeft  = row.sideLeft  ?? (Math.abs(diff) >= 45);
-  const sideRight = row.sideRight ?? (Math.abs(diff) >= 45);
-  // H案：前線は進行方向と重なる場合（diffが-30°〜+30°）は描画しない
-  const sideFront = (row.sideFront ?? false) && Math.abs(diff) > 30;
-
-  function degToRad(d) { return d * Math.PI / 180; }
-  function normBearToSVGRad(b) { return degToRad(b - 90); }
-
-  const inTailRad  = normBearToSVGRad(180);
-  const outHeadRad = normBearToSVGRad(diff);
-
-  const inTailX  = cx + Math.cos(inTailRad)  * R;
-  const inTailY  = cy + Math.sin(inTailRad)  * R;
-  const outHeadX = cx + Math.cos(outHeadRad) * R;
-  const outHeadY = cy + Math.sin(outHeadRad) * R;
-
-  const perpRad1 = normBearToSVGRad(90);
-  const perpRad2 = normBearToSVGRad(-90);
-  const perpX1 = cx + Math.cos(perpRad1) * R, perpY1 = cy + Math.sin(perpRad1) * R;
-  const perpX2 = cx + Math.cos(perpRad2) * R, perpY2 = cy + Math.sin(perpRad2) * R;
-
-  const arrowTip = 14, arrowWid = 9;
-  const baseX = cx + Math.cos(outHeadRad) * (R - arrowTip);
-  const baseY = cy + Math.sin(outHeadRad) * (R - arrowTip);
-  const perpA = outHeadRad + Math.PI / 2;
-  const p1x = baseX + Math.cos(perpA) * arrowWid, p1y = baseY + Math.sin(perpA) * arrowWid;
-  const p2x = baseX - Math.cos(perpA) * arrowWid, p2y = baseY - Math.sin(perpA) * arrowWid;
-
-  const styleRoad = `stroke="#1a1a1a" stroke-width="3" stroke-linecap="round"`;
-  const styleSide = `stroke="#aaa" stroke-width="3" stroke-linecap="round"`;
-  const styleOut  = `stroke="#1a1a1a" stroke-width="5" stroke-linecap="round"`;
-
-  let inner = '';
-  if (sideLeft)  inner += `<line x1="${cx}" y1="${cy}" x2="${perpX2.toFixed(1)}" y2="${perpY2.toFixed(1)}" ${styleSide}/>`;
-  if (sideRight) inner += `<line x1="${cx}" y1="${cy}" x2="${perpX1.toFixed(1)}" y2="${perpY1.toFixed(1)}" ${styleSide}/>`;
-  // 前線（H案：diffが±30°超のときのみ描画）
-  if (sideFront) {
-    const frontRad = normBearToSVGRad(0);
-    const fX = cx + Math.cos(frontRad) * R, fY = cy + Math.sin(frontRad) * R;
-    inner += `<line x1="${cx}" y1="${cy}" x2="${fX.toFixed(1)}" y2="${fY.toFixed(1)}" ${styleSide}/>`;
-  }
-  inner += `<line x1="${cx}" y1="${cy}" x2="${inTailX.toFixed(1)}" y2="${inTailY.toFixed(1)}" ${styleRoad}/>`;
-  inner += `<line x1="${cx}" y1="${cy}" x2="${baseX.toFixed(1)}" y2="${baseY.toFixed(1)}" ${styleOut}/>`;
-  inner += `<polygon points="${outHeadX.toFixed(1)},${outHeadY.toFixed(1)} ${p1x.toFixed(1)},${p1y.toFixed(1)} ${p2x.toFixed(1)},${p2y.toFixed(1)}" fill="#1a1a1a"/>"`;
-
-  // 目印ラベル描画
-  const ZONE_POS = {
-    '左上': {x:8,  y:10}, '上':   {x:65, y:10}, '右上': {x:122, y:10},
-    '左':   {x:8,  y:65}, '右':   {x:122,y:65},
-    '左下': {x:8,  y:120},'下':   {x:65, y:120},'右下': {x:122,y:120},
-  };
-  (row.labels ?? []).forEach(lb => {
-    if (!lb.text) return;
-    const pos = ZONE_POS[lb.zone] ?? {x:10, y:10};
-    const tw = lb.text.length * 7 + 8;
-    const th = 18;
-    const bx = Math.min(pos.x, W - tw - 2);
-    const by = Math.min(pos.y, H - th - 2);
-    inner += `<rect x="${bx}" y="${by}" width="${tw}" height="${th}" fill="white" stroke="#1a1a1a" stroke-width="1.2" rx="1"/>`;
-    inner += `<text x="${bx + tw/2}" y="${by + 13}" text-anchor="middle" font-size="9" font-family="sans-serif" fill="#1a1a1a">${lb.text}</text>`;
-  });
-
-  return `<svg class="dir-svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"><g>${inner}</g></svg>`;
-}
-
-// ── コマ挿入・削除
-function insertRow(idx, pos) {
-  saveHistory();
-  const insertAt = pos === 'before' ? idx : idx + 1;
-  const prevRow = komazuRows[insertAt - 1];
-  const nextRow = komazuRows[insertAt];
-  const newTotal = prevRow ? prevRow.total : 0;
-  komazuRows.splice(insertAt, 0, {
-    type: 'turn', total: newTotal, part: 0,
-    diff: 0, sideLeft: false, sideRight: false,
-    labels: [], info: '',
-  });
-  recalcNumbers();
-  renderTable(komazuRows);
-}
-
-function deleteRow(idx) {
-  if (komazuRows.length <= 1) return;
-  saveHistory();
-  komazuRows.splice(idx, 1);
-  recalcNumbers();
-  renderTable(komazuRows);
-}
-
-function recalcNumbers() {
-  // Part距離を再計算（total値はそのまま維持、partのみ更新）
-  for (let i = 1; i < komazuRows.length; i++) {
-    komazuRows[i].part = Math.max(0, komazuRows[i].total - komazuRows[i-1].total);
-  }
-  if (komazuRows[0]) komazuRows[0].part = 0;
-}
-
-// ══ 編集パネル ══
-let editTargetIdx = null;
-let epDiff = 0;
-
-function openEditPanel(idx) {
-  editTargetIdx = idx;
-  const row = komazuRows[idx];
-  epDiff = row.diff ?? 0;
-
-  // 方向ボタンのアクティブ状態
-  document.querySelectorAll('.dir-btn').forEach(btn => {
-    btn.classList.toggle('active', parseFloat(btn.dataset.diff) === epDiff);
-  });
-
-  // 側道チェック
-  document.getElementById('ep-side-left').checked  = row.sideLeft  ?? false;
-  document.getElementById('ep-side-front').checked = row.sideFront ?? false;
-  document.getElementById('ep-side-right').checked = row.sideRight ?? false;
-
-  // 距離入力
-  document.getElementById('ep-total').value = row.total.toFixed(2);
-  document.getElementById('ep-part').value  = row.part.toFixed(2);
-
-  // ラベルリスト
-  renderLabelList(row.labels ?? []);
-
-  // プレビュー更新
-  updatePreview();
-
-  document.getElementById('edit-overlay').classList.add('open');
-}
-
-function closeEditPanel() {
-  document.getElementById('edit-overlay').classList.remove('open');
-  editTargetIdx = null;
-}
-
-function updatePreview() {
-  const sideLeft  = document.getElementById('ep-side-left').checked;
-  const sideFront = document.getElementById('ep-side-front').checked;
-  const sideRight = document.getElementById('ep-side-right').checked;
-  const labels = collectLabels();
-  const fakeRow = { diff: epDiff, sideLeft, sideFront, sideRight, labels };
-  document.getElementById('ep-preview').innerHTML = buildSVGWithLabels(fakeRow);
-}
-
-function confirmEdit() {
-  if (editTargetIdx === null) return;
-  saveHistory();
-  const row = komazuRows[editTargetIdx];
-  row.diff       = epDiff;
-  row.sideLeft   = document.getElementById('ep-side-left').checked;
-  row.sideFront  = document.getElementById('ep-side-front').checked;
-  row.sideRight  = document.getElementById('ep-side-right').checked;
-  row.labels     = collectLabels();
-  row.dir        = classifyDirection(epDiff);
-
-  // 距離更新
-  const newTotal = parseFloat(document.getElementById('ep-total').value);
-  if (!isNaN(newTotal) && newTotal >= 0) {
-    const prevTotal = editTargetIdx > 0 ? komazuRows[editTargetIdx - 1].total : 0;
-    row.total = newTotal;
-    row.part  = Math.max(0, newTotal - prevTotal);
-    // 直後のコマのPartのみ更新
-    const next = komazuRows[editTargetIdx + 1];
-    if (next) next.part = Math.max(0, next.total - newTotal);
   }
 
-  closeEditPanel();
-  renderTable(komazuRows);
-}
+  function deleteIcon(idx) { localIconState.splice(idx, 1); renderClockSvg(); renderIconInputs(); }
 
-// ── ラベル関連
-const ZONES = ['左上','上','右上','左','右','左下','下','右下'];
-
-function renderLabelList(labels) {
-  const list = document.getElementById('ep-label-list');
-  list.innerHTML = '';
-  labels.forEach((lb, i) => {
-    const row = document.createElement('div');
-    row.className = 'label-row';
-    const sel = document.createElement('select');
-    ZONES.forEach(z => {
-      const opt = document.createElement('option');
-      opt.value = z; opt.textContent = z;
-      if (z === lb.zone) opt.selected = true;
-      sel.appendChild(opt);
+  function renderIconInputs() {
+    const area = document.getElementById('icon-inputs-area');
+    if(!area) return;
+    area.innerHTML = '';
+    localIconState.forEach((ic, idx) => {
+      if (ic.type === 'route' || ic.type === 'signboard') {
+        const div = document.createElement('div');
+        div.style.display = 'flex'; div.style.gap = '5px'; div.style.alignItems = 'center';
+        const label = document.createElement('span'); label.style.fontSize = '0.75rem';
+        label.textContent = ic.type==='route'?'おにぎり番号:':'看板地名:';
+        
+        const input = document.createElement('input');
+        input.type = 'text'; input.style.padding = '3px'; input.style.flex = '1';
+        input.value = ic.text || '';
+        input.oninput = (e) => { ic.text = e.target.value; renderClockSvg(); };
+        div.appendChild(label); div.appendChild(input);
+        area.appendChild(div);
+      }
     });
-    sel.onchange = updatePreview;
-    const inp = document.createElement('input');
-    inp.type = 'text'; inp.placeholder = '施設名など'; inp.value = lb.text ?? '';
-    inp.oninput = updatePreview;
-    const del = document.createElement('button');
-    del.className = 'btn-del-label'; del.textContent = '✕';
-    del.onclick = () => { row.remove(); updatePreview(); };
-    row.append(sel, inp, del);
-    list.appendChild(row);
-  });
-}
+  }
 
-function addLabelRow() {
-  const list = document.getElementById('ep-label-list');
-  const row = document.createElement('div');
-  row.className = 'label-row';
-  const sel = document.createElement('select');
-  ZONES.forEach(z => {
-    const opt = document.createElement('option');
-    opt.value = z; opt.textContent = z;
-    sel.appendChild(opt);
-  });
-  sel.onchange = updatePreview;
-  const inp = document.createElement('input');
-  inp.type = 'text'; inp.placeholder = '施設名など';
-  inp.oninput = updatePreview;
-  const del = document.createElement('button');
-  del.className = 'btn-del-label'; del.textContent = '✕';
-  del.onclick = () => { row.remove(); updatePreview(); };
-  row.append(sel, inp, del);
-  list.appendChild(row);
-  updatePreview();
-}
+  function exportJSON() {
+    const blob = new Blob([JSON.stringify(komazuRows, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = "komazu_route_v2.51.json"; a.click();
+  }
 
-function collectLabels() {
-  const rows = document.querySelectorAll('#ep-label-list .label-row');
-  return Array.from(rows).map(r => ({
-    zone: r.querySelector('select').value,
-    text: r.querySelector('input').value.trim(),
-  })).filter(lb => lb.text);
-}
+  function importJSON() {
+    const input = document.createElement('input'); input.type = 'file'; input.accept = '.json';
+    input.onchange = e => {
+      const reader = new FileReader();
+      reader.onload = event => {
+        try {
+          komazuRows = JSON.parse(event.target.result);
+          komazuRows.forEach(row => {
+            row.total = Number(row.total) || 0; row.part = Number(row.part) || 0;
+            if (!row.memo) row.memo = '';
+            if (!row.pcType) row.pcType = 'none';
+            if (!row.direction) row.direction = {};
+            if (row.direction.offsetX === undefined) row.direction.offsetX = 0;
+            if (row.direction.offsetY === undefined) row.direction.offsetY = 0;
+            if (!Array.isArray(row.direction.branches)) row.direction.branches = [];
+            if (!Array.isArray(row.direction.icons)) row.direction.icons = [];
+            if (row.direction.useV2 === undefined) row.direction.useV2 = false;
+            if (row.direction.offsetX2 === undefined) row.direction.offsetX2 = 0;
+            if (row.direction.offsetY2 === undefined) row.direction.offsetY2 = -40;
+            if (!Array.isArray(row.direction.branches2)) row.direction.branches2 = [];
+          });
+          recalculateDistances(); renderTable();
+        } catch(err) { alert('読み込みに失敗しました。'); }
+      };
+      reader.readAsText(e.target.files[0]);
+    };
+    input.click();
+  }
 
-// ══ パブリッシュ版HTML生成（M案）══
-function publishHTML() {
-  const title = document.getElementById('event-title')?.textContent || 'コマ図';
+  function clearData() {
+    if (confirm('すべて初期化しますか？')) {
+      saveHistory();
+      komazuRows = [
+        { id: 1, total: 0, part: 0, memo: 'START地点', pcType: 'none', direction: { mainAngle: null, branches: [], icons: [], offsetX: 0, offsetY: 0, useV2: false, offsetX2: 0, offsetY2: -40, branches2: [], mainAngle2: null } },
+        { id: 2, total: 0, part: 0, memo: 'GOAL地点', pcType: 'none', direction: { mainAngle: null, branches: [], icons: [], offsetX: 0, offsetY: 0, useV2: false, offsetX2: 0, offsetY2: -40, branches2: [], mainAngle2: null } }
+      ];
+      renderTable();
+    }
+  }
 
-  // 各コマのSVG＋情報を静的HTMLとして生成
-  const rowsHTML = komazuRows.map((row, i) => {
-    const isStart = row.type === 'start';
-    const isGoal  = row.type === 'goal';
-    const isSpecial = isStart || isGoal;
+  function publishMobileHTML() {
+    let itemsHtml = '';
+    komazuRows.forEach((row, idx) => {
+      const svgDummy = generateCompleteSvg(row.direction, true);
+      const svgString = new XMLSerializer().serializeToString(svgDummy);
+      
+      let pcClass = ''; let pcBadge = ''; let pcButton = '';
+      if(row.pcType === 'start') {
+        pcClass = 'pc-start-row';
+        pcBadge = '<div class="pc-badge start-badge">PC START</div>';
+        pcButton = '<button class="time-btn start-btn" onclick="recordTime(' + idx + ', \'START\')">計測START開始</button>';
+      } else if(row.pcType === 'goal') {
+        pcClass = 'pc-goal-row';
+        pcBadge = '<div class="pc-badge goal-badge">PC GOAL</div>';
+        pcButton = '<button class="time-btn goal-btn" onclick="recordTime(' + idx + ', \'GOAL\')">計測GOAL終了</button>';
+      }
 
-    const numCell = isStart
-      ? `<td class="td-num checkpoint">START</td>`
-      : isGoal
-        ? `<td class="td-num checkpoint" style="color:#c0392b">GOAL</td>`
-        : `<td class="td-num">${i + 1}</td>`;
+      itemsHtml += '<div class="komazu-card ' + pcClass + '" id="card-' + idx + '">' +
+        '<div class="card-left">' +
+          '<div class="card-no">' + (idx + 1) + '</div>' +
+          '<div class="card-dist">' +
+            '<div><small>TOTAL</small><span>' + row.total.toFixed(2) + '</span></div>' +
+            '<div><small>PART</small><span>' + row.part.toFixed(2) + '</span></div>' +
+          '</div>' +
+        '</div>' +
+        '<div class="card-mid">' + svgString + '</div>' +
+        '<div class="card-right">' +
+          pcBadge +
+          '<div class="card-memo">' + (row.memo || '') + '</div>' +
+          pcButton +
+          '<div class="time-display" id="time-display-' + idx + '"></div>' +
+        '</div>' +
+      '</div>';
+    });
 
-    const distCell = `<td class="td-dist">
-      <span class="dist-total">${row.total.toFixed(2)}</span>
-      <span class="dist-part">${row.part.toFixed(2)}</span>
-    </td>`;
-
-    const svgHTML = buildSVGWithLabels(row);
-    const dirCell = `<td class="td-direction">${svgHTML}</td>`;
-
-    const infoLines = (row.info || '').split('\n').map(l => `<div>${escapeHTML(l)}</div>`).join('');
-    const infoCell = `<td class="td-info">${infoLines}</td>`;
-
-    const rowClass = isSpecial ? ' class="checkpoint-row"' : '';
-    return `<tr${rowClass}>${numCell}${distCell}${dirCell}${infoCell}</tr>`;
-  }).join('\n');
-
-  const lastTotal = komazuRows[komazuRows.length - 1]?.total ?? 0;
-
-  const html = `<!DOCTYPE html>
+    const mobileHtmlSource = `<!DOCTYPE html>
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>${escapeHTML(title)}</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-select=no">
+<title>ラリーコマ図 (モバイル版)</title>
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Noto+Sans+JP:wght@400;700&family=Share+Tech+Mono&display=swap');
-  :root { --border: #1a1a1a; --accent: #c0392b; --muted: #888; --row-alt: #fafaf7; }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: #f5f3ee; font-family: 'Noto Sans JP', sans-serif; color: var(--border); }
-
-  .komazu-wrap { max-width: 900px; margin: 2rem auto; padding: 0 1rem; }
-  .komazu-event-title {
-    font-family: 'Bebas Neue', sans-serif; font-size: 2rem; letter-spacing: 0.05em;
-    margin-bottom: 1.5rem; padding-bottom: 0.5rem; border-bottom: 3px solid var(--border);
-  }
-
-  table.komazu-table { width: 100%; border-collapse: collapse; background: #fff; border: 2px solid var(--border); }
-  table.komazu-table thead tr { background: var(--border); color: #fff; }
-  table.komazu-table thead th { padding: 0.6rem 0.5rem; font-size: 0.78rem; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; }
-  table.komazu-table tbody tr { border-bottom: 1.5px solid #ddd; }
-  table.komazu-table tbody tr:nth-child(even) { background: var(--row-alt); }
-  table.komazu-table tbody tr.checkpoint-row { background: #fff8e1; }
-  table.komazu-table td { padding: 0.5rem; vertical-align: middle; font-size: 0.9rem; }
-
-  .td-num { width: 42px; text-align: center; font-family: 'Share Tech Mono', monospace; font-size: 1rem; font-weight: 700; color: var(--muted); }
-  .td-num.checkpoint { color: var(--accent); font-size: 0.75rem; font-weight: 900; }
-  .td-dist { width: 90px; text-align: center; }
-  .dist-total { font-family: 'Share Tech Mono', monospace; font-size: 1.1rem; font-weight: 700; display: block; }
-  .dist-part  { font-family: 'Share Tech Mono', monospace; font-size: 0.85rem; color: var(--muted); display: block; }
-  .td-direction { width: 160px; text-align: center; padding: 0.8rem 0.5rem; }
-  .td-info { min-width: 160px; font-size: 0.83rem; line-height: 1.8; padding: 0.6rem 0.8rem; }
-  svg.dir-svg { display: block; margin: 0 auto; }
-
-  .pub-footer { margin-top: 1rem; font-size: 0.8rem; color: #888; text-align: right; }
-
-  @media print {
-    body { background: #fff; }
-    .komazu-wrap { margin: 0; padding: 0; max-width: 100%; }
-    table.komazu-table { font-size: 0.8rem; page-break-inside: auto; }
-    tr { page-break-inside: avoid; }
-  }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f3ee; padding: 10px; color: #1a1a1a; }
+  .container { max-width: 500px; margin: 0 auto; padding-bottom: 80px; }
+  h1 { font-size: 1.2rem; text-align: center; margin: 10px 0; font-weight: bold; }
+  .komazu-card { background: #fff; border: 2px solid #1a1a1a; margin-bottom: 15px; display: flex; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+  .pc-start-row { border: 3px solid #4b9c4b; background: #f2f9f2; }
+  .pc-goal-row { border: 3px solid #d9534f; background: #f9f2f2; }
+  .card-left { width: 85px; background: #333; color: #fff; display: flex; flex-direction: column; justify-content: space-between; padding: 10px 5px; text-align: center; }
+  .card-no { font-size: 1.8rem; font-weight: bold; }
+  .card-dist { font-size: 0.9rem; font-family: monospace; display: flex; flex-direction: column; gap: 4px; }
+  .card-dist small { display: block; font-size: 0.6rem; color: #aaa; }
+  .card-mid { width: 170px; display: flex; align-items: center; justify-content: center; background: #fff; border-right: 1px dashed #ccc; padding: 5px; }
+  .card-right { flex: 1; padding: 10px; display: flex; flex-direction: column; justify-content: center; position: relative; }
+  .card-memo { font-size: 0.95rem; font-weight: bold; margin-bottom: 8px; }
+  .pc-badge { font-size: 0.7rem; font-weight: bold; color: #fff; padding: 2px 6px; border-radius: 4px; display: inline-block; margin-bottom: 5px; }
+  .start-badge { background: #4b9c4b; }
+  .goal-badge { background: #d9534f; }
+  .time-btn { width: 100%; padding: 12px; border: none; font-weight: bold; border-radius: 6px; color: #fff; font-size: 0.9rem; cursor: pointer; margin-top: 5px; box-shadow: 0 2px 4px rgba(0,0,0,0.2); }
+  .start-btn { background: #4b9c4b; }
+  .goal-btn { background: #d9534f; }
+  .time-display { font-family: monospace; font-size: 1.05rem; font-weight: bold; margin-top: 6px; color: #333; background: #eee; padding: 4px; text-align: center; border-radius: 4px; display: none; }
+  .footer-panel { position: fixed; bottom: 0; left: 0; right: 0; background: #333; color: #fff; padding: 12px; text-align: center; display: flex; justify-content: space-around; align-items: center; box-shadow: 0 -3px 10px rgba(0,0,0,0.3); }
+  .copy-btn { background: #f0ad4e; color: #fff; border: none; padding: 8px 16px; font-weight: bold; border-radius: 4px; cursor: pointer; }
 </style>
 </head>
 <body>
-<div class="komazu-wrap">
-  <div class="komazu-event-title">${escapeHTML(title)}</div>
-  <table class="komazu-table">
-    <thead>
-      <tr>
-        <th style="width:42px">#</th>
-        <th style="width:90px">Distance km<br><span style="font-weight:400;font-size:0.7rem">Total / Part</span></th>
-        <th>Direction</th>
-        <th>Information</th>
-      </tr>
-    </thead>
-    <tbody>
-${rowsHTML}
-    </tbody>
-  </table>
-  <div class="pub-footer">総走行距離：約 ${lastTotal.toFixed(1)} km ／ コマ数：${komazuRows.length}</div>
+<div class="container">
+  <h1>ラリー走行用コマ図 (MOBILE)</h1>
+  ${itemsHtml}
 </div>
+<div class="footer-panel">
+  <div id="summary-text" style="font-size:0.85rem; font-family:monospace;">タイム未計測</div>
+  <button class="copy-btn" onclick="copyResult()">結果をコピーして提出</button>
+</div>
+<script>
+  let recordedTimes = {};
+  function recordTime(idx, type) {
+    const now = new Date();
+    const timeStr = now.toTimeString().split(" ")[0] + "." + String(now.getMilliseconds()).padStart(3, "0");
+    recordedTimes[type] = { time: now, str: timeStr, idx: idx + 1 };
+    const display = document.getElementById("time-display-" + idx);
+    display.innerText = type + ": " + timeStr;
+    display.style.display = "block";
+    updateSummary();
+  }
+  function updateSummary() {
+    const summary = document.getElementById("summary-text");
+    if(recordedTimes["START"] && recordedTimes["GOAL"]) {
+      const diffMs = recordedTimes["GOAL"].time - recordedTimes["START"].time;
+      const totalSec = Math.floor(diffMs / 1000);
+      const min = Math.floor(totalSec / 60);
+      const sec = totalSec % 60;
+      const ms = diffMs % 1000;
+      recordedTimes["diffStr"] = min + "分" + sec + "秒" + String(ms).padStart(3, "0");
+      summary.innerText = "区間計測完了: " + recordedTimes["diffStr"];
+    } else if(recordedTimes["START"]) {
+      summary.innerText = "PC走行中...";
+    }
+  }
+  function copyResult() {
+    let bib = prompt("ゼッケン番号（またはお名前）を入力してください:", "");
+    if(!bib) bib = "匿名";
+    let text = "【リザルト提出】\\nゼッケン: " + bib + "\\n";
+    if(recordedTimes["START"]) text += "START (No."+recordedTimes["START"].idx+"): " + recordedTimes["START"].str + "\\n";
+    if(recordedTimes["GOAL"]) text += "GOAL (No."+recordedTimes["GOAL"].idx+"): " + recordedTimes["GOAL"].str + "\\n";
+    if(recordedTimes["diffStr"]) text += "所要時間: " + recordedTimes["diffStr"] + "\\n";
+    else text += "タイム未計測または途中です。\\n";
+    navigator.clipboard.writeText(text).then(() => {
+      alert("結果をクリップボードにコピーしました！");
+    }).catch(() => {
+      alert("コピーに失敗しました。\\n" + text);
+    });
+  }
+</` + `script>
 </body>
 </html>`;
 
-  // Blob URLでダウンロード
-  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
-  const url  = URL.createObjectURL(blob);
-  const a    = document.createElement('a');
-  a.href     = url;
-  a.download = (title.replace(/\s+/g, '_') || 'komazu') + '_published.html';
-  a.click();
-  URL.revokeObjectURL(url);
-}
+    const blob = new Blob([mobileHtmlSource], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = 'komazu_mobile_app.html'; a.click();
+  }
 
-function escapeHTML(str) {
-  return String(str ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
-// ── イベント設定
-document.addEventListener('DOMContentLoaded', () => {
-  // 方向ボタン
-  document.querySelectorAll('.dir-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      epDiff = parseFloat(btn.dataset.diff);
-      if (epDiff === 999) epDiff = 0;
-      document.querySelectorAll('.dir-btn').forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      updatePreview();
-    });
-  });
-  document.getElementById('ep-side-left').addEventListener('change', updatePreview);
-  document.getElementById('ep-side-front').addEventListener('change', updatePreview);
-  document.getElementById('ep-side-right').addEventListener('change', updatePreview);
-
-  // 距離入力：Total↔Part 連動
-  document.getElementById('ep-total').addEventListener('input', () => {
-    const total = parseFloat(document.getElementById('ep-total').value);
-    if (isNaN(total) || editTargetIdx === null) return;
-    const prevTotal = editTargetIdx > 0 ? komazuRows[editTargetIdx - 1].total : 0;
-    document.getElementById('ep-part').value = Math.max(0, total - prevTotal).toFixed(2);
-  });
-  document.getElementById('ep-part').addEventListener('input', () => {
-    const part = parseFloat(document.getElementById('ep-part').value);
-    if (isNaN(part) || editTargetIdx === null) return;
-    const prevTotal = editTargetIdx > 0 ? komazuRows[editTargetIdx - 1].total : 0;
-    document.getElementById('ep-total').value = (prevTotal + Math.max(0, part)).toFixed(2);
-  });
-  document.getElementById('btn-add-label').addEventListener('click', addLabelRow);
-  document.getElementById('btn-ep-cancel').addEventListener('click', closeEditPanel);
-  document.getElementById('btn-ep-confirm').addEventListener('click', confirmEdit);
-  document.getElementById('edit-overlay').addEventListener('click', e => {
-    if (e.target === document.getElementById('edit-overlay')) closeEditPanel();
-  });
-});
+  renderTable();
 </script>
 </body>
 </html>
